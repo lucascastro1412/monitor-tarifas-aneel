@@ -2,7 +2,7 @@
 
 Agente diário que acompanha as tarifas homologadas pela ANEEL e mantém um painel de comparação.
 
-**Painel online:** https://<usuario>.github.io/monitor-tarifas-aneel/ (Excel: https://<usuario>.github.io/monitor-tarifas-aneel/Painel_Tarifas_ANEEL.xlsx)
+**Painel online:** https://lucascastro1412.github.io/monitor-tarifas-aneel/ (Excel: https://lucascastro1412.github.io/monitor-tarifas-aneel/Painel_Tarifas_ANEEL.xlsx)
 
 **O que monitora**
 - **B3 Convencional, Tarifa de Aplicação:** TUSD, TE e total (R$/MWh), todas as distribuidoras, histórico completo desde 2010.
