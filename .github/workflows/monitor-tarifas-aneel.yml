@@ -1,28 +1,32 @@
 name: Monitor Tarifas ANEEL (B3, Fio B SCEE e Grupo A)
 
-# Rotina diaria: roda 1 vez por dia, as 07:00 de Brasilia (10:00 UTC).
-# Fonte: arquivos Parquet de dados abertos da ANEEL (B3, Grupo A A4/A3 e Fio B). Da API so usa package_show,
-# para saber se o arquivo mudou (last_modified); so baixa de novo o Parquet que mudou.
-# Quando detecta nova homologacao (REH/Despacho) ou valor alterado:
+# A coleta na ANEEL roda no PC do usuario (rodar_local.ps1, IP brasileiro): o portal
+# dadosabertos.aneel.gov.br recusa os runners do GitHub Actions (SSLEOFError no package_show).
+# O rodar_local.ps1 faz commit e push de data/ e dos paineis; esse push dispara este workflow,
+# que so monta o site com o que esta commitado e publica no GitHub Pages (index.html + Excel).
+#
+# Coleta no Actions: DESLIGADA por padrao. So roda em:
+#   - Run workflow (workflow_dispatch) com "coletar" marcado (padrao: desmarcado); ou
+#   - Run workflow com a variavel do repositorio MODO_COLETA = "actions"
+#     (Settings > Secrets and variables > Actions > Variables).
+# Push nunca coleta (evita laco com o rodar_local.ps1).
+#
+# Sem cron: com a coleta no PC, uma execucao agendada so republicaria o mesmo painel que o push
+# ja publicou. Para voltar a coletar todo dia no Actions (se a ANEEL liberar os runners), defina
+# MODO_COLETA = "actions" e reative o bloco "schedule" abaixo; o COLETAR ja trata o evento schedule.
+#
+# Quando a coleta roda no Actions e detecta nova homologacao (REH/Despacho) ou valor alterado:
 #   - atualiza data/*.csv e os paineis Painel_Tarifas_ANEEL.xlsx e .html (commit automatico)
 #   - abre uma Issue com o resumo (o GitHub envia por e-mail a quem acompanha o repo)
-# Em toda execucao (com ou sem mudanca) publica o painel atual no GitHub Pages (index.html + Excel).
-# Se a execucao falhar, o GitHub tambem avisa por e-mail.
-# Disparo manual: aba Actions -> este workflow -> Run workflow.
-#
-# Modo de coleta (variavel do repositorio MODO_COLETA, em Settings > Secrets and variables > Actions > Variables):
-#   - ausente ou "actions": o proprio GitHub Actions coleta na ANEEL (padrao).
-#   - "local": a coleta roda no PC (rodar_local.ps1, que faz commit e push de data/ e dos paineis) e o
-#     Actions so publica no Pages o painel que estiver commitado. Use se a ANEEL recusar o runner.
-# Em qualquer modo, se a coleta falhar o painel ja commitado ainda e publicado; o job termina como falha
-# no fim (para o GitHub avisar por e-mail), mas o deploy do Pages nao depende do sucesso da coleta.
-# Push na main que mude o painel ou data/ (ex.: vindo do rodar_local.ps1) so republica o Pages.
+# Se a coleta falhar, o painel ja commitado ainda e publicado; o job termina como falha no fim
+# (para o GitHub avisar por e-mail), mas o deploy do Pages nao depende do sucesso da coleta.
 
 on:
-  schedule:
-    - cron: "0 10 * * *"  # 07:00 em Brasilia (UTC-3)
+  # schedule:
+  #   - cron: "0 10 * * *"  # 07:00 em Brasilia (UTC-3); so coleta se MODO_COLETA = "actions"
   push:
     branches: [main]
+    # Push que mude so data/ ou os paineis (o caso do rodar_local.ps1) republica o Pages.
     paths:
       - "Painel_Tarifas_ANEEL.html"
       - "Painel_Tarifas_ANEEL.xlsx"
@@ -30,11 +34,11 @@ on:
   workflow_dispatch:
     inputs:
       coletar:
-        description: "Coletar na ANEEL (desmarque para so republicar o painel commitado)"
+        description: "Coletar na ANEEL (a ANEEL costuma recusar o runner; deixe desmarcado para so republicar o painel commitado)"
         type: boolean
-        default: true
+        default: false
       forcar_painel:
-        description: "Regerar os paineis Excel e HTML mesmo sem mudancas"
+        description: "Regerar os paineis Excel e HTML mesmo sem mudancas (so com coleta)"
         type: boolean
         default: false
 
@@ -55,17 +59,18 @@ jobs:
     outputs:
       tem_painel: ${{ steps.site.outputs.tem_painel }}
     env:
-      # Coleta so em schedule ou Run workflow (com "coletar" marcado) e fora do modo local.
-      COLETAR: ${{ vars.MODO_COLETA != 'local' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.coletar)) }}
+      # Coleta so em Run workflow com "coletar" marcado, ou com MODO_COLETA = "actions" (Run workflow
+      # ou schedule, se reativado). Push nunca coleta.
+      COLETAR: ${{ (github.event_name == 'workflow_dispatch' && (inputs.coletar || vars.MODO_COLETA == 'actions')) || (github.event_name == 'schedule' && vars.MODO_COLETA == 'actions') }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Modo de execucao
         run: |
-          echo "Evento: ${{ github.event_name }} | MODO_COLETA: ${{ vars.MODO_COLETA || 'actions' }} | coletar: $COLETAR"
+          echo "Evento: ${{ github.event_name }} | MODO_COLETA: ${{ vars.MODO_COLETA || '(nao definida)' }} | coletar: $COLETAR"
           if [ "$COLETAR" != "true" ]; then
-            echo "::notice title=Sem coleta::So publica o painel commitado (modo local, push ou coletar desmarcado)."
+            echo "::notice title=Sem coleta::So publica o painel commitado (coleta no PC via rodar_local.ps1)."
           fi
 
       - name: Setup Python
@@ -160,7 +165,7 @@ jobs:
       - name: Resultado da coleta
         if: always() && steps.monitor.outcome == 'failure'
         run: |
-          echo "::error title=Coleta ANEEL falhou::Painel commitado foi publicado mesmo assim. Veja o log de 'Executar monitor'. Se a ANEEL recusou o runner, use o modo local (README)."
+          echo "::error title=Coleta ANEEL falhou::Painel commitado foi publicado mesmo assim. Veja o log de 'Executar monitor'. Se a ANEEL recusou o runner, colete no PC com rodar_local.ps1 (README)."
           exit 1
 
   deploy:

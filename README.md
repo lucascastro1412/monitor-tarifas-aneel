@@ -18,7 +18,7 @@ A ANEEL ainda usa siglas antigas (ex.: ELETROPAULO para a Enel SP). O arquivo `d
 - Aceita CSV separado por vírgula ou ponto e vírgula (Excel pt-BR) e com ou sem BOM.
 
 **Como funciona**
-1. O GitHub Actions roda `monitor_tarifas.py` 1 vez por dia, às 07:00 de Brasília (cron `0 10 * * *`, UTC), no workflow `Monitor Tarifas ANEEL`, sem depender do PC ligado. Também dá para rodar na mão (Run workflow).
+1. A coleta roda no PC, pelo `rodar_local.ps1` (que chama `monitor_tarifas.py`), porque a ANEEL recusa os runners do GitHub Actions. O script faz commit e push de `data/` e dos painéis; o push dispara o workflow `Monitor Tarifas ANEEL`, que só publica o painel no GitHub Pages. Para rodar todo dia, veja "Agendar a coleta diária".
 2. A fonte são os **arquivos Parquet completos** da ANEEL. Da API CKAN o script usa só o `package_show`, para achar a URL e o `last_modified` de cada arquivo:
    - B3: Parquet do dataset `tarifas-distribuidoras-energia-eletrica` (resource `9af99ef4-...`, ~2,6 MB);
    - Fio B: Parquet anual do dataset `componentes-tarifarias` (~25 a 58 MB cada), dos anos `fiob_ano_inicial - 2` em diante. Anos novos (ex.: 2027) entram sozinhos quando a ANEEL publicar.
@@ -113,27 +113,21 @@ Em 04/11/2026, com o Grupo A: primeira execução (linha de base do Grupo A) 89 
 
 **Publicação no GitHub Pages**
 
-Em toda execução (com ou sem mudança), o workflow monta a pasta `site/` com `index.html` (cópia de `Painel_Tarifas_ANEEL.html`) e `Painel_Tarifas_ANEEL.xlsx`, e publica no GitHub Pages num job `deploy` separado. Assim o site sempre mostra o painel atual. O link "Baixar Excel" no topo do painel aponta para o `.xlsx` ao lado (funciona no site e na pasta local). A Issue de alerta traz o link do site (variável `PAINEL_URL`, definida no workflow).
+Em toda execução do workflow (push de `data/` ou dos painéis, ou Run workflow), ele monta a pasta `site/` com `index.html` (cópia de `Painel_Tarifas_ANEEL.html`) e `Painel_Tarifas_ANEEL.xlsx`, e publica no GitHub Pages num job `deploy` separado. Assim o site sempre mostra o painel atual. O link "Baixar Excel" no topo do painel aponta para o `.xlsx` ao lado (funciona no site e na pasta local). A Issue de alerta traz o link do site (variável `PAINEL_URL`, definida no workflow).
 
 **Ativação (uma vez)**
 1. Settings → Pages → Build and deployment → Source: **GitHub Actions**.
-2. Actions → `Monitor Tarifas ANEEL` → **Run workflow**. A primeira execução cria a linha de base em `data/` (sem alerta), gera os painéis, faz o commit e publica o site.
-3. Para receber os alertas por e-mail: **Watch** → Custom → **Issues** no repositório.
+2. No PC, na pasta do repositório: `pip install -r requirements.txt` e confira que `git push` funciona sem pedir senha.
+3. Rode `.odar_local.ps1` no PowerShell. A primeira execução cria a linha de base em `data/` (sem alerta), gera os painéis, faz commit e push; o push publica o site.
+4. Alertas: se houver mudança e o GitHub CLI (`gh`) estiver instalado e logado, o `rodar_local.ps1` abre a Issue; para recebê-la por e-mail, **Watch** → Custom → **Issues** no repositório. Sem `gh`, o resumo fica em `alerta.md` e no log.
 
-O agendamento diário (cron `0 10 * * *`) só roda na branch padrão. O GitHub desativa agendamentos de repositórios públicos sem atividade por 60 dias; o commit diário do `estado.json` evita isso. No modo local, o push diário do `rodar_local.ps1` cumpre esse papel.
+**Coleta no PC (`rodar_local.ps1`) e papel do GitHub Actions**
 
-**Se a ANEEL recusar o GitHub Actions (modo local)**
+O portal `dadosabertos.aneel.gov.br` (API e Parquets, tudo no mesmo domínio) recusa conexões de data centers fora do Brasil, como os runners do GitHub Actions (`SSLEOFError UNEXPECTED_EOF` no `package_show`). Não há correção no código: a coleta precisa rodar num IP brasileiro, por isso roda no PC.
 
-O portal `dadosabertos.aneel.gov.br` (API e Parquets, tudo no mesmo domínio) pode recusar conexões de data centers fora do Brasil, como os runners do GitHub Actions. Nesse caso o log de "Executar monitor" mostra `ANEEL recusou a conexao a partir do runner` e não há correção no código: a coleta precisa rodar num IP brasileiro, por exemplo no seu PC.
-
-Mesmo com a coleta falha, o workflow publica no Pages o painel que já estiver commitado: o job `deploy` não depende do sucesso da coleta, e o job `monitorar` só termina como falho no último step, para o GitHub avisar por e-mail.
-
-Para passar a coleta para o PC:
-1. Uma vez, na pasta do repositório: `pip install -r requirements.txt` e confira que `git push` funciona sem pedir senha.
-2. Rode `.\rodar_local.ps1` no PowerShell. Ele faz `git pull`, roda o monitor, faz commit de `data/` e dos painéis e dá `git push`. O push na `main` dispara o workflow, que só republica o Pages. Opções: `-ForcarPainel` e `-SemPush`. Log em `logs\`. Se houver alerta e o GitHub CLI (`gh`) estiver instalado e logado, ele também abre a Issue.
-3. No GitHub: Settings → Secrets and variables → Actions → aba **Variables** → New repository variable `MODO_COLETA` = `local`. A partir daí o agendamento diário do Actions não tenta mais coletar e só republica o painel commitado (sem e-mail de falha todo dia). Para voltar a coletar no Actions, apague a variável ou mude para `actions`.
-4. Opcional, para rodar todo dia: Agendador de Tarefas do Windows → Criar Tarefa Básica → diária, 07:30 → Iniciar um programa: `powershell.exe`, argumentos `-NoProfile -ExecutionPolicy Bypass -File "<pasta do repositório>\rodar_local.ps1"`. O PC precisa estar ligado e com internet no horário.
-
-No Run workflow manual, desmarque "Coletar na ANEEL" para só republicar o painel commitado.
+- `.odar_local.ps1` faz `git pull`, roda o monitor, faz commit de `data/` e dos painéis e dá `git push`. Opções: `-ForcarPainel` e `-SemPush`. Log em `logs\`.
+- O workflow não tem cron. Ele roda no push na `main` que mude `data/` ou os painéis (o push do `rodar_local.ps1`) e no Run workflow manual, e nesses casos só monta o site com o que está commitado e publica no Pages.
+- Coleta no Actions fica desligada por padrão. Ela só roda no Run workflow com "Coletar na ANEEL" marcado (padrão desmarcado) ou com a variável do repositório `MODO_COLETA` = `actions` (Settings → Secrets and variables → Actions → Variables). Push nunca coleta. Para voltar a coletar todo dia no Actions (se a ANEEL liberar os runners), defina `MODO_COLETA` = `actions` e descomente o bloco `schedule` no workflow.
+- Se a coleta no Actions falhar, o painel já commitado é publicado assim mesmo e o job termina como falho no último step, para o GitHub avisar por e-mail.
 
 Detalhes da fonte e armadilhas conhecidas: [docs/aneel-fonte-dados.md](docs/aneel-fonte-dados.md).

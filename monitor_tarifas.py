@@ -33,8 +33,8 @@ Cada execucao:
   4. registra mudancas em data/log_mudancas.csv;
   5. se houver mudanca, regera os paineis Excel e HTML e escreve alerta.md.
 
-Roda 1 vez por dia, as 07:00 de Brasilia, via GitHub Actions
-(.github/workflows/monitor-tarifas-aneel.yml), ou localmente:  python monitor_tarifas.py
+Roda 1 vez por dia no PC (rodar_local.ps1, agendado as 07:30), que faz commit e push de data/ e dos
+paineis; o GitHub Actions so publica o painel no Pages. Na mao:  python monitor_tarifas.py
 """
 from __future__ import annotations
 
@@ -1380,7 +1380,7 @@ def textos_metodologia(visoes: dict, cfg: dict) -> list[str]:
     return [
         "Fonte: arquivos Parquet de dados abertos da ANEEL (mesma base do painel Luz na Tarifa): "
         "tarifas-distribuidoras-energia-eletrica (B3) e componentes-tarifarias (Fio B, um arquivo por ano). "
-        "Atualizacao diaria as 07:00 (Brasilia); cada arquivo so e baixado de novo quando a ANEEL o atualiza.",
+        "Atualizacao diaria (coleta agendada no PC); cada arquivo so e baixado de novo quando a ANEEL o atualiza.",
         "Recorte: subgrupo B3, modalidade Convencional, base Tarifa de Aplicacao, valores em R$/MWh.",
         "Linha considerada: classe, subclasse, posto e acessante = 'Nao se aplica'.",
         "",
@@ -2153,7 +2153,7 @@ a{color:var(--azul2)}
     <span>Painel gerado em <span id="m-gerado"></span> (Brasília)</span>
     <span>Fontes: dadosabertos.aneel.gov.br e Banco Central (IPCA)</span>
     <span><a href="Painel_Tarifas_ANEEL.xlsx" download style="color:#fff;font-weight:600">Baixar Excel</a></span>
-    <span class="status"><i></i>Agente ativo: verificação automática diária às 07:00 (Brasília)</span>
+    <span class="status"><i></i>Agente ativo: verificação automática diária</span>
   </div>
   <nav class="abas" id="abas">
     <button data-aba="geral" class="ativo">Visão geral</button>
@@ -3469,8 +3469,8 @@ if __name__ == "__main__":
             print(f"ERRO: {MSG_BLOQUEIO} ({len(FALHAS_CONEXAO)} recusas: "
                   f"{', '.join(sorted(set(FALHAS_CONEXAO)))}). O portal dadosabertos.aneel.gov.br costuma "
                   "recusar IPs de data centers fora do Brasil, como os do GitHub Actions. Rode a coleta no PC "
-                  "(rodar_local.ps1) e defina a variavel MODO_COLETA=local no repositorio; ver README.",
+                  "(rodar_local.ps1); ver README.",
                   file=sys.stderr)
             if os.environ.get("GITHUB_ACTIONS"):
-                print(f"::error title=ANEEL bloqueou o runner::{MSG_BLOQUEIO}. Use o modo local (README).")
+                print(f"::error title=ANEEL bloqueou o runner::{MSG_BLOQUEIO}. Colete no PC com rodar_local.ps1 (README).")
         sys.exit(1)
