@@ -1,5 +1,6 @@
 # Roda o Monitor de Tarifas ANEEL no PC (IP brasileiro) e envia dados e paineis ao GitHub.
-# O push na main dispara o workflow, que so republica o painel no GitHub Pages.
+# O push na main dispara o workflow, que republica o painel no GitHub Pages e abre uma Issue para
+# cada alerta novo em data/alertas/.
 #
 # Uso (PowerShell, na pasta do repositorio):
 #   .\rodar_local.ps1                  # coleta, commit e push
@@ -69,15 +70,11 @@ try {
         }
     }
 
-    # Alerta de nova homologacao: abre Issue se o GitHub CLI (gh) estiver instalado e logado.
-    if ((Test-Path "alerta.md") -and -not $SemPush) {
-        if (Get-Command gh -ErrorAction SilentlyContinue) {
-            $titulo = ((Get-Content "alerta.md" -TotalCount 1 -Encoding UTF8) -replace '^# ', '')
-            & gh label create tarifa-aneel --color FBCA04 --description "Alertas do monitor de tarifas ANEEL" --force
-            & gh issue create --title $titulo --body-file alerta.md --label tarifa-aneel
-        } else {
-            Write-Host "ALERTA gerado em alerta.md (instale o GitHub CLI 'gh' para abrir a Issue automaticamente)."
-        }
+    # Alerta de nova homologacao: o monitor grava alerta.md e data/alertas/<AAAA-MM-DD_HHMM>.md; este
+    # ultimo vai no commit acima e, no push, o workflow abre a Issue (nao precisa do GitHub CLI no PC).
+    if (Test-Path "alerta.md") {
+        if ($SemPush) { Write-Host "ALERTA gerado (data/alertas/); a Issue so abre depois do push." }
+        else { Write-Host "ALERTA gerado e enviado; o workflow abre a Issue no GitHub." }
     }
 } catch {
     Write-Host "ERRO: $_"

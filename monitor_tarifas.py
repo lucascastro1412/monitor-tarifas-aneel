@@ -1331,8 +1331,8 @@ def montar_alerta(visoes: dict, mudancas: dict, cfg: dict, agora: datetime) -> s
     if outras:
         linhas += [f"Alem disso, {outras} linha(s) de classes, postos ou detalhes especificos "
                    "mudaram (ver aba Log Mudancas do painel).", ""]
-    # PAINEL_URL (workflow): link do painel no GitHub Pages; sem ela, cita os arquivos locais.
-    url = os.environ.get("PAINEL_URL", "").strip()
+    # Link do painel no GitHub Pages: env PAINEL_URL (workflow) tem prioridade; senao config.json "painel_url".
+    url = os.environ.get("PAINEL_URL", "").strip() or str(cfg.get("painel_url") or "").strip()
     linhas += [f"Painel atualizado: {url} (Excel: {url.rstrip('/')}/{PAINEL}.xlsx)." if url
                else f"Paineis atualizados: `{PAINEL}.html` e `{PAINEL}.xlsx`.",
                "", "Fonte: dadosabertos.aneel.gov.br (tarifas-distribuidoras-energia-eletrica "
@@ -3445,7 +3445,16 @@ def main() -> int:
     alerta = None if primeira_vez and not houve_mudanca else montar_alerta(visoes, mudancas, cfg, agora)
     if alerta:
         alerta_path.write_text(alerta, encoding="utf-8")
-        print("ALERTA gerado:\n" + alerta)
+        # Copia versionada em data/alertas/: entra no commit da coleta e o workflow abre a Issue no push.
+        pasta_alertas = dados / "alertas"
+        pasta_alertas.mkdir(parents=True, exist_ok=True)
+        arq_alerta = pasta_alertas / f"{agora:%Y-%m-%d_%H%M}.md"
+        n = 2
+        while arq_alerta.exists():
+            arq_alerta = pasta_alertas / f"{agora:%Y-%m-%d_%H%M}_{n}.md"
+            n += 1
+        arq_alerta.write_text(alerta, encoding="utf-8")
+        print(f"ALERTA gerado ({arq_alerta.relative_to(base).as_posix()}):\n" + alerta)
     else:
         print("Sem mudancas relevantes.")
 

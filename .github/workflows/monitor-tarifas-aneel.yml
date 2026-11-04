@@ -17,7 +17,11 @@ name: Monitor Tarifas ANEEL (B3, Fio B SCEE e Grupo A)
 #
 # Quando a coleta roda no Actions e detecta nova homologacao (REH/Despacho) ou valor alterado:
 #   - atualiza data/*.csv e os paineis Painel_Tarifas_ANEEL.xlsx e .html (commit automatico)
-#   - abre uma Issue com o resumo (o GitHub envia por e-mail a quem acompanha o repo)
+#   - grava data/alertas/<AAAA-MM-DD_HHMM>.md, que entra no mesmo commit
+#
+# Alertas por Issue (com ou sem coleta no Actions): todo arquivo novo em data/alertas/ (do push do
+# rodar_local.ps1 ou do commit da coleta) vira uma Issue com a label tarifa-aneel; o GitHub envia a
+# Issue por e-mail a quem acompanha o repo. Nao depende do GitHub CLI no PC.
 # Se a coleta falhar, o painel ja commitado ainda e publicado; o job termina como falha no fim
 # (para o GitHub avisar por e-mail), mas o deploy do Pages nao depende do sucesso da coleta.
 
@@ -65,6 +69,29 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Historico completo: o step "Abrir alertas" compara github.event.before com o HEAD.
+          fetch-depth: 0
+
+      # Base para detectar alertas novos em data/alertas/:
+      #   - push: github.event.before (se for tudo zero ou nao existir no historico, usa HEAD^);
+      #   - Run workflow/schedule: o commit atual, antes da coleta (so pega o alerta que a coleta commitar).
+      - name: Base dos alertas
+        env:
+          ANTES: ${{ github.event.before }}
+        run: |
+          BASE=""
+          if [ "${{ github.event_name }}" = "push" ]; then
+            if [ -n "$ANTES" ] && ! echo "$ANTES" | grep -qE '^0+$' && git cat-file -e "${ANTES}^{commit}" 2>/dev/null; then
+              BASE="$ANTES"
+            elif git rev-parse -q --verify HEAD^ >/dev/null; then
+              BASE="$(git rev-parse HEAD^)"
+            fi
+          else
+            BASE="$(git rev-parse HEAD)"
+          fi
+          echo "Base dos alertas: ${BASE:-(nenhuma)}"
+          echo "ALERTAS_BASE=$BASE" >> "$GITHUB_ENV"
 
       - name: Modo de execucao
         run: |
@@ -113,14 +140,35 @@ jobs:
             git push
           fi
 
-      - name: Abrir alerta (Issue)
-        if: steps.monitor.outcome == 'success' && steps.monitor.outputs.alerta == 'true'
+      # Uma Issue por arquivo novo em data/alertas/ (adicionado entre ALERTAS_BASE e o HEAD): vem do push
+      # do rodar_local.ps1 ou do commit da coleta no Actions. Arquivo apagado ou alterado nao abre Issue.
+      # Roda mesmo com a coleta desligada. Sem duplicar: o corpo leva o caminho do arquivo no rodape e,
+      # antes de abrir, procura esse caminho nas Issues da label tarifa-aneel (abertas e fechadas), o que
+      # cobre o re-run do mesmo commit.
+      - name: Abrir alertas (Issues)
+        if: always() && env.ALERTAS_BASE != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          NOVOS="$(git diff --name-only --diff-filter=A "$ALERTAS_BASE" HEAD -- 'data/alertas/*.md')"
+          if [ -z "$NOVOS" ]; then
+            echo "Nenhum alerta novo em data/alertas/."
+            exit 0
+          fi
           gh label create tarifa-aneel --color FBCA04 --description "Alertas do monitor de tarifas ANEEL" --force
-          TITULO="$(head -n1 alerta.md | sed 's/^# //')"
-          gh issue create --title "$TITULO" --body-file alerta.md --label tarifa-aneel
+          EXISTENTES="$(gh issue list --label tarifa-aneel --state all --limit 1000 --json body --jq '.[].body')"
+          while IFS= read -r ARQ; do
+            [ -n "$ARQ" ] || continue
+            if grep -qF "Arquivo do alerta: $ARQ" <<< "$EXISTENTES"; then
+              echo "Issue de $ARQ ja existe; nada a fazer."
+              continue
+            fi
+            TITULO="$(head -n1 "$ARQ" | tr -d '\r' | sed 's/^# //')"
+            [ -n "$TITULO" ] || TITULO="Monitor Tarifas ANEEL: alerta $(basename "$ARQ")"
+            { cat "$ARQ"; printf '\n---\nArquivo do alerta: %s\n' "$ARQ"; } > "$RUNNER_TEMP/corpo_alerta.md"
+            gh issue create --title "$TITULO" --body-file "$RUNNER_TEMP/corpo_alerta.md" --label tarifa-aneel
+            echo "Issue aberta para $ARQ"
+          done <<< "$NOVOS"
 
       # Site do GitHub Pages: montado em toda execucao, mesmo sem mudancas ou com a coleta falha,
       # a partir do painel no disco (o recem-gerado ou o ultimo commitado).

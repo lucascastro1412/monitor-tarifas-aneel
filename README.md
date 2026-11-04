@@ -18,7 +18,7 @@ A ANEEL ainda usa siglas antigas (ex.: ELETROPAULO para a Enel SP). O arquivo `d
 - Aceita CSV separado por vírgula ou ponto e vírgula (Excel pt-BR) e com ou sem BOM.
 
 **Como funciona**
-1. A coleta roda no PC, pelo `rodar_local.ps1` (que chama `monitor_tarifas.py`), porque a ANEEL recusa os runners do GitHub Actions. O script faz commit e push de `data/` e dos painéis; o push dispara o workflow `Monitor Tarifas ANEEL`, que só publica o painel no GitHub Pages. Para rodar todo dia, veja "Agendar a coleta diária".
+1. A coleta roda no PC, pelo `rodar_local.ps1` (que chama `monitor_tarifas.py`), porque a ANEEL recusa os runners do GitHub Actions. O script faz commit e push de `data/` e dos painéis; o push dispara o workflow `Monitor Tarifas ANEEL`, que publica o painel no GitHub Pages e abre a Issue de cada alerta novo. Para rodar todo dia, veja "Agendar a coleta diária".
 2. A fonte são os **arquivos Parquet completos** da ANEEL. Da API CKAN o script usa só o `package_show`, para achar a URL e o `last_modified` de cada arquivo:
    - B3: Parquet do dataset `tarifas-distribuidoras-energia-eletrica` (resource `9af99ef4-...`, ~2,6 MB);
    - Fio B: Parquet anual do dataset `componentes-tarifarias` (~25 a 58 MB cada), dos anos `fiob_ano_inicial - 2` em diante. Anos novos (ex.: 2027) entram sozinhos quando a ANEEL publicar.
@@ -27,7 +27,7 @@ A ANEEL ainda usa siglas antigas (ex.: ELETROPAULO para a Enel SP). O arquivo `d
 4. O script normaliza, compara com o snapshot (`data/tarifas_b3.csv`, `data/fiob_b3.csv`, `data/tarifas_grupo_a.csv`, `data/fiob_grupo_a.csv`) pela chave de negócio (CNPJ, REH, vigência, subgrupo, modalidade, base, classe, subclasse, detalhe, posto, unidade, acessante) e, se houver nova REH/Despacho ou valor alterado:
    - registra em `data/log_mudancas.csv`;
    - regera `Painel_Tarifas_ANEEL.xlsx` e `Painel_Tarifas_ANEEL.html` (antes `Painel_Tarifas_B3.*`) e salva no repositório;
-   - abre uma **Issue** no GitHub com a tabela de mudanças (TUSD, TE, total, variação %, Fio B e Fio B efetivo) e a seção "Grupo A": uma linha por distribuidora, subgrupo e modalidade, com energia fora ponta, energia ponta e demanda e a variação de cada uma contra a vigência anterior. O GitHub manda a Issue por e-mail.
+   - grava o alerta em `alerta.md` (local, fora do git) e em `data/alertas/<AAAA-MM-DD_HHMM>.md` (entra no commit); no push, o workflow abre uma **Issue** no GitHub com a tabela de mudanças (TUSD, TE, total, variação %, Fio B e Fio B efetivo) e a seção "Grupo A": uma linha por distribuidora, subgrupo e modalidade, com energia fora ponta, energia ponta e demanda e a variação de cada uma contra a vigência anterior. O GitHub manda a Issue por e-mail.
    - O log grava a série do Grupo A como `Grupo A TUSD+TE A4 Verde`, `Fio B Grupo A A3 Azul` etc.
 5. IPCA: cache em `data/ipca_bcb.json`, baixado de novo só quando o mês muda (enquanto o IPCA do mês anterior não sai, no máximo 1 tentativa por dia). Timeout de 90 s, 3 tentativas. Se a API do Banco Central falhar, usa o cache e avisa no painel; sem cache, as comparações com a inflação ficam vazias e a execução segue.
 6. O painel também é regerado quando a vigência atual de alguma distribuidora muda (uma vigência começa ou termina), quando o calendário de reajustes muda ou quando chega IPCA novo, mesmo sem mudança na base.
@@ -95,6 +95,7 @@ O arquivo anual de componentes é organizado pelo processo tarifário, não pelo
 - `fiob_ano_inicial`: primeiro ano de vigência do Fio B, da B3 e do Grupo A (padrão 2026). Mudar o valor força novo download dos recortes do Fio B; vigências anteriores saem do snapshot sem gerar alerta.
 - `subgrupos_grupo_a`: subgrupos do Grupo A (padrão `["A4", "A3"]`; aceita A3a, A2, A1, AS). Lista vazia desliga o Grupo A.
 - `grupo_a_ano_inicial`: primeiro ano de vigência das tarifas do Grupo A (padrão 2016; o recorte desde 2016 tem ~14.600 linhas e ~3,3 MB).
+- `painel_url`: link do painel online citado no rodapé do alerta (padrão `https://lucascastro1412.github.io/monitor-tarifas-aneel/`). A variável de ambiente `PAINEL_URL` tem prioridade.
 
 **Dependências:** `requests`, `pandas`, `openpyxl` e `pyarrow`.
 
@@ -113,20 +114,30 @@ Em 04/11/2026, com o Grupo A: primeira execução (linha de base do Grupo A) 89 
 
 **Publicação no GitHub Pages**
 
-Em toda execução do workflow (push de `data/` ou dos painéis, ou Run workflow), ele monta a pasta `site/` com `index.html` (cópia de `Painel_Tarifas_ANEEL.html`) e `Painel_Tarifas_ANEEL.xlsx`, e publica no GitHub Pages num job `deploy` separado. Assim o site sempre mostra o painel atual. O link "Baixar Excel" no topo do painel aponta para o `.xlsx` ao lado (funciona no site e na pasta local). A Issue de alerta traz o link do site (variável `PAINEL_URL`, definida no workflow).
+Em toda execução do workflow (push de `data/` ou dos painéis, ou Run workflow), ele monta a pasta `site/` com `index.html` (cópia de `Painel_Tarifas_ANEEL.html`) e `Painel_Tarifas_ANEEL.xlsx`, e publica no GitHub Pages num job `deploy` separado. Assim o site sempre mostra o painel atual. O link "Baixar Excel" no topo do painel aponta para o `.xlsx` ao lado (funciona no site e na pasta local). A Issue de alerta traz o link do site (variável `PAINEL_URL` no workflow; na coleta local, `painel_url` do `config.json`).
 
 **Ativação (uma vez)**
 1. Settings → Pages → Build and deployment → Source: **GitHub Actions**.
 2. No PC, na pasta do repositório: `pip install -r requirements.txt` e confira que `git push` funciona sem pedir senha.
 3. Rode `.\rodar_local.ps1` no PowerShell. A primeira execução cria a linha de base em `data/` (sem alerta), gera os painéis, faz commit e push; o push publica o site.
-4. Alertas: se houver mudança e o GitHub CLI (`gh`) estiver instalado e logado, o `rodar_local.ps1` abre a Issue; para recebê-la por e-mail, **Watch** → Custom → **Issues** no repositório. Sem `gh`, o resumo fica em `alerta.md` e no log.
+4. Alertas por e-mail: veja "Alertas (Issues e e-mail)" abaixo. Não precisa do GitHub CLI no PC.
+
+**Alertas (Issues e e-mail)**
+
+- Quando há mudança, o `monitor_tarifas.py` grava `alerta.md` (cópia local, ignorada pelo git) e `data/alertas/<AAAA-MM-DD_HHMM>.md` (mesmo conteúdo, entra no commit da coleta).
+- No push, o workflow procura arquivos **adicionados** em `data/alertas/` entre o commit anterior (`github.event.before`) e o novo, e abre uma Issue para cada um: título = primeira linha do arquivo, corpo = arquivo + rodapé `Arquivo do alerta: data/alertas/...`, label `tarifa-aneel`. Usa o `gh` do runner com o token do próprio workflow; funciona com a coleta no Actions desligada. Apagar ou editar um arquivo de `data/alertas/` não abre Issue.
+- Sem duplicata: antes de abrir, o workflow procura o caminho do arquivo no corpo das Issues da label `tarifa-aneel` (abertas e fechadas). Re-run do mesmo commit não abre outra.
+- E-mail: a Issue é aberta pelo `github-actions[bot]`, então o GitHub avisa quem acompanha o repositório. Por padrão, o GitHub faz você acompanhar (**Watch: All Activity**) os repositórios que você cria na sua conta, e as notificações de "Watching" vão por e-mail se o e-mail estiver ligado. Para conferir:
+  1. No repositório, botão **Watch**: deve estar em **All Activity** ou em **Custom** com **Issues** marcado. "Participating and @mentions" ou "Ignore" não mandam a Issue.
+  2. Em https://github.com/settings/notifications, em **Subscriptions → Watching**, marque **Email**. O e-mail vai para o endereço padrão de notificação (ou o roteamento por organização, se houver).
+  3. Opcional: filtrar no cliente de e-mail por `[lucascastro1412/monitor-tarifas-aneel]` no assunto.
 
 **Coleta no PC (`rodar_local.ps1`) e papel do GitHub Actions**
 
 O portal `dadosabertos.aneel.gov.br` (API e Parquets, tudo no mesmo domínio) costuma recusar conexões de data centers fora do Brasil, como os runners do GitHub Actions (`SSLEOFError UNEXPECTED_EOF` no `package_show`). A recusa é intermitente (em 04/11/2026 uma execução manual no Actions passou), então não dá para depender dela: a coleta roda num IP brasileiro, no PC.
 
 - `.\rodar_local.ps1` faz `git pull`, roda o monitor, faz commit de `data/` e dos painéis e dá `git push`. Opções: `-ForcarPainel` e `-SemPush`. Log em `logs\`.
-- O workflow não tem cron. Ele roda no push na `main` que mude `data/` ou os painéis (o push do `rodar_local.ps1`) e no Run workflow manual, e nesses casos só monta o site com o que está commitado e publica no Pages.
+- O workflow não tem cron. Ele roda no push na `main` que mude `data/` (inclui `data/alertas/`) ou os painéis (o push do `rodar_local.ps1`) e no Run workflow manual, e nesses casos monta o site com o que está commitado, publica no Pages e abre as Issues dos alertas novos.
 - Coleta no Actions fica desligada por padrão. Ela só roda no Run workflow com "Coletar na ANEEL" marcado (padrão desmarcado) ou com a variável do repositório `MODO_COLETA` = `actions` (Settings → Secrets and variables → Actions → Variables). Push nunca coleta. Para voltar a coletar todo dia no Actions (se a ANEEL liberar os runners), defina `MODO_COLETA` = `actions` e descomente o bloco `schedule` no workflow.
 - Se a coleta no Actions falhar, o painel já commitado é publicado assim mesmo e o job termina como falho no último step, para o GitHub avisar por e-mail.
 
