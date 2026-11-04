@@ -6,7 +6,8 @@
 #   .\rodar_local.ps1 -ForcarPainel    # regera Excel e HTML mesmo sem mudancas
 #   .\rodar_local.ps1 -SemPush         # coleta e commit, sem push
 #
-# Requisitos: Python 3.11+ (comando "py" ou "python") com requirements.txt instalado, e git ja
+# Requisitos: Python 3.11+ (comando "py" ou "python", ou o caminho absoluto em $pythonFallback)
+# com requirements.txt instalado, e git ja
 # autenticado no GitHub (o push nao pode pedir senha se rodar pelo Agendador de Tarefas).
 # Log de cada execucao: logs\rodar_local_<data>.log (pasta ignorada pelo git).
 
@@ -36,7 +37,14 @@ try {
     # Traz commits novos (ex.: execucoes anteriores) antes de gerar os arquivos.
     Invoke-Git pull --rebase --autostash
 
-    $python = if (Get-Command py -ErrorAction SilentlyContinue) { "py" } else { "python" }
+    # Python: "py" ou "python" do PATH; se nenhum estiver no PATH (ex.: Agendador de Tarefas com
+    # ambiente reduzido), usa o interpretador absoluto em que o requirements.txt foi instalado.
+    $pythonFallback = "C:\Users\LucasSilvaCastro\AppData\Local\Python\pythoncore-3.14-64\python.exe"
+    if (Get-Command py -ErrorAction SilentlyContinue) { $python = "py" }
+    elseif (Get-Command python -ErrorAction SilentlyContinue) { $python = "python" }
+    elseif (Test-Path $pythonFallback) { $python = $pythonFallback }
+    else { throw "Python nao encontrado (nem py, nem python no PATH, nem $pythonFallback)" }
+    Write-Host "Python: $python"
     $argsPy = @("monitor_tarifas.py")
     if ($ForcarPainel) { $argsPy += "--forcar-painel" }
     & $python @argsPy

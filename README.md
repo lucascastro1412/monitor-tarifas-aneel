@@ -118,16 +118,34 @@ Em toda execução do workflow (push de `data/` ou dos painéis, ou Run workflow
 **Ativação (uma vez)**
 1. Settings → Pages → Build and deployment → Source: **GitHub Actions**.
 2. No PC, na pasta do repositório: `pip install -r requirements.txt` e confira que `git push` funciona sem pedir senha.
-3. Rode `.odar_local.ps1` no PowerShell. A primeira execução cria a linha de base em `data/` (sem alerta), gera os painéis, faz commit e push; o push publica o site.
+3. Rode `.\rodar_local.ps1` no PowerShell. A primeira execução cria a linha de base em `data/` (sem alerta), gera os painéis, faz commit e push; o push publica o site.
 4. Alertas: se houver mudança e o GitHub CLI (`gh`) estiver instalado e logado, o `rodar_local.ps1` abre a Issue; para recebê-la por e-mail, **Watch** → Custom → **Issues** no repositório. Sem `gh`, o resumo fica em `alerta.md` e no log.
 
 **Coleta no PC (`rodar_local.ps1`) e papel do GitHub Actions**
 
-O portal `dadosabertos.aneel.gov.br` (API e Parquets, tudo no mesmo domínio) recusa conexões de data centers fora do Brasil, como os runners do GitHub Actions (`SSLEOFError UNEXPECTED_EOF` no `package_show`). Não há correção no código: a coleta precisa rodar num IP brasileiro, por isso roda no PC.
+O portal `dadosabertos.aneel.gov.br` (API e Parquets, tudo no mesmo domínio) costuma recusar conexões de data centers fora do Brasil, como os runners do GitHub Actions (`SSLEOFError UNEXPECTED_EOF` no `package_show`). A recusa é intermitente (em 04/11/2026 uma execução manual no Actions passou), então não dá para depender dela: a coleta roda num IP brasileiro, no PC.
 
-- `.odar_local.ps1` faz `git pull`, roda o monitor, faz commit de `data/` e dos painéis e dá `git push`. Opções: `-ForcarPainel` e `-SemPush`. Log em `logs\`.
+- `.\rodar_local.ps1` faz `git pull`, roda o monitor, faz commit de `data/` e dos painéis e dá `git push`. Opções: `-ForcarPainel` e `-SemPush`. Log em `logs\`.
 - O workflow não tem cron. Ele roda no push na `main` que mude `data/` ou os painéis (o push do `rodar_local.ps1`) e no Run workflow manual, e nesses casos só monta o site com o que está commitado e publica no Pages.
 - Coleta no Actions fica desligada por padrão. Ela só roda no Run workflow com "Coletar na ANEEL" marcado (padrão desmarcado) ou com a variável do repositório `MODO_COLETA` = `actions` (Settings → Secrets and variables → Actions → Variables). Push nunca coleta. Para voltar a coletar todo dia no Actions (se a ANEEL liberar os runners), defina `MODO_COLETA` = `actions` e descomente o bloco `schedule` no workflow.
 - Se a coleta no Actions falhar, o painel já commitado é publicado assim mesmo e o job termina como falho no último step, para o GitHub avisar por e-mail.
+
+**Agendar a coleta diária**
+
+Rodar o `rodar_local.ps1` todo dia às 07:30 pelo Agendador de Tarefas do Windows, como o usuário atual. Cole no PowerShell (não precisa ser administrador):
+
+```powershell
+$repo = "C:\Users\LucasSilvaCastro\Projetos\monitor-tarifas-aneel"
+$acao = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$repo\rodar_local.ps1`"" -WorkingDirectory $repo
+$gatilho = New-ScheduledTaskTrigger -Daily -At 07:30
+$config = New-ScheduledTaskSettingsSet -StartWhenAvailable -RunOnlyIfNetworkAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
+$usuario = New-ScheduledTaskPrincipal -UserId ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive
+Register-ScheduledTask -TaskName "Monitor Tarifas ANEEL" -Action $acao -Trigger $gatilho -Settings $config -Principal $usuario -Description "Coleta diaria das tarifas ANEEL e push para o GitHub Pages"
+```
+
+- `StartWhenAvailable`: se o PC estava desligado às 07:30, roda assim que possível. `RunOnlyIfNetworkAvailable`: só roda com rede. `LogonType Interactive`: roda com o usuário logado, sem guardar senha, usando o login do git já configurado.
+- Se `py`/`python` não estiver no PATH da tarefa, o script usa `C:\Users\LucasSilvaCastro\AppData\Local\Python\pythoncore-3.14-64\python.exe` (variável `$pythonFallback`).
+- Conferir: `Get-ScheduledTask -TaskName "Monitor Tarifas ANEEL" | Get-ScheduledTaskInfo` (mostra `LastRunTime`, `LastTaskResult` = 0 quando deu certo, e `NextRunTime`). Rodar agora para testar: `Start-ScheduledTask -TaskName "Monitor Tarifas ANEEL"`. Log de cada execução em `logs\`.
+- Remover: `Unregister-ScheduledTask -TaskName "Monitor Tarifas ANEEL" -Confirm:$false`.
 
 Detalhes da fonte e armadilhas conhecidas: [docs/aneel-fonte-dados.md](docs/aneel-fonte-dados.md).
