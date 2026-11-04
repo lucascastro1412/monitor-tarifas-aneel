@@ -198,6 +198,33 @@ SESSAO.headers["User-Agent"] = "monitor-tarifas-aneel/1.0"
 
 # --------------------------------------------------------------------------- API
 
+# Erros de rede/recusa vistos nesta execucao (para a mensagem final explicar o bloqueio, sem stack trace).
+FALHAS_CONEXAO: list[str] = []
+MSG_BLOQUEIO = "ANEEL recusou a conexao a partir do runner"
+
+
+def _eh_recusa(e: Exception) -> bool:
+    """Conexao recusada/resetada, TLS interrompido (SSL EOF), timeout de conexao ou HTTP 401/403/451."""
+    if isinstance(e, (requests.exceptions.ConnectionError, requests.exceptions.SSLError,
+                      requests.exceptions.ConnectTimeout)):
+        return True
+    resp = getattr(e, "response", None)
+    return resp is not None and getattr(resp, "status_code", None) in (401, 403, 451)
+
+
+def _descrever(e: Exception) -> str:
+    """Resumo de uma linha do erro; recusas de rede ganham o prefixo MSG_BLOQUEIO."""
+    txt = str(e).splitlines()[0][:200] if str(e) else type(e).__name__
+    if _eh_recusa(e):
+        FALHAS_CONEXAO.append(type(e).__name__)
+        return f"{MSG_BLOQUEIO} ({type(e).__name__}: {txt})"
+    return f"{type(e).__name__}: {txt}"
+
+
+def _espera(i: int) -> int:
+    return 10 * 2 ** i  # backoff: 10 s, 20 s, 40 s ...
+
+
 def chamar_api(acao: str, params: dict, tentativas: int = 4) -> dict:
     ultimo_erro = None
     for i in range(tentativas):
@@ -210,12 +237,12 @@ def chamar_api(acao: str, params: dict, tentativas: int = 4) -> dict:
                 raise RuntimeError(f"API ANEEL retornou erro: {j.get('error')}")
             return j["result"]
         except Exception as e:  # noqa: BLE001
-            ultimo_erro = e
+            ultimo_erro = _descrever(e)
             if i < tentativas - 1:
-                espera = 15 * (i + 1)
-                print(f"  [aviso] {acao} falhou ({e}); nova tentativa em {espera}s", flush=True)
-                time.sleep(espera)
-    raise RuntimeError(f"Falha definitiva em {acao}: {ultimo_erro}")
+                print(f"  [aviso] {acao} tentativa {i + 1}/{tentativas} falhou: {ultimo_erro}; "
+                      f"nova tentativa em {_espera(i)}s", flush=True)
+                time.sleep(_espera(i))
+    raise RuntimeError(f"Falha definitiva em {acao} apos {tentativas} tentativas: {ultimo_erro}")
 
 
 def _info_parquet(r: dict) -> dict:
@@ -280,11 +307,12 @@ def baixar_arquivo(url: str, destino: Path, tentativas: int = 3) -> int:
                             raise TimeoutError(f"download passou de {TEMPO_MAX_DOWNLOAD} s")
             return n
         except Exception as e:  # noqa: BLE001
-            ultimo_erro = e
+            ultimo_erro = _descrever(e)
             if i < tentativas - 1:
-                print(f"  [aviso] download falhou ({e}); nova tentativa em {15 * (i + 1)}s", flush=True)
-                time.sleep(15 * (i + 1))
-    raise RuntimeError(f"Falha no download de {url}: {ultimo_erro}")
+                print(f"  [aviso] download tentativa {i + 1}/{tentativas} falhou: {ultimo_erro}; "
+                      f"nova tentativa em {_espera(i)}s", flush=True)
+                time.sleep(_espera(i))
+    raise RuntimeError(f"Falha no download de {url} apos {tentativas} tentativas: {ultimo_erro}")
 
 
 def ler_parquet(caminho: Path, fonte: dict, inicio_min: str | None = None) -> pd.DataFrame:
@@ -3437,4 +3465,12 @@ if __name__ == "__main__":
         sys.exit(main())
     except Exception as e:  # noqa: BLE001
         print(f"ERRO: {e}", file=sys.stderr)
+        if FALHAS_CONEXAO:
+            print(f"ERRO: {MSG_BLOQUEIO} ({len(FALHAS_CONEXAO)} recusas: "
+                  f"{', '.join(sorted(set(FALHAS_CONEXAO)))}). O portal dadosabertos.aneel.gov.br costuma "
+                  "recusar IPs de data centers fora do Brasil, como os do GitHub Actions. Rode a coleta no PC "
+                  "(rodar_local.ps1) e defina a variavel MODO_COLETA=local no repositorio; ver README.",
+                  file=sys.stderr)
+            if os.environ.get("GITHUB_ACTIONS"):
+                print(f"::error title=ANEEL bloqueou o runner::{MSG_BLOQUEIO}. Use o modo local (README).")
         sys.exit(1)

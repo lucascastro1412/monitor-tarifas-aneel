@@ -120,6 +120,20 @@ Em toda execução (com ou sem mudança), o workflow monta a pasta `site/` com `
 2. Actions → `Monitor Tarifas ANEEL` → **Run workflow**. A primeira execução cria a linha de base em `data/` (sem alerta), gera os painéis, faz o commit e publica o site.
 3. Para receber os alertas por e-mail: **Watch** → Custom → **Issues** no repositório.
 
-O agendamento diário (cron `0 10 * * *`) só roda na branch padrão. O GitHub desativa agendamentos de repositórios públicos sem atividade por 60 dias; o commit diário do `estado.json` evita isso.
+O agendamento diário (cron `0 10 * * *`) só roda na branch padrão. O GitHub desativa agendamentos de repositórios públicos sem atividade por 60 dias; o commit diário do `estado.json` evita isso. No modo local, o push diário do `rodar_local.ps1` cumpre esse papel.
+
+**Se a ANEEL recusar o GitHub Actions (modo local)**
+
+O portal `dadosabertos.aneel.gov.br` (API e Parquets, tudo no mesmo domínio) pode recusar conexões de data centers fora do Brasil, como os runners do GitHub Actions. Nesse caso o log de "Executar monitor" mostra `ANEEL recusou a conexao a partir do runner` e não há correção no código: a coleta precisa rodar num IP brasileiro, por exemplo no seu PC.
+
+Mesmo com a coleta falha, o workflow publica no Pages o painel que já estiver commitado: o job `deploy` não depende do sucesso da coleta, e o job `monitorar` só termina como falho no último step, para o GitHub avisar por e-mail.
+
+Para passar a coleta para o PC:
+1. Uma vez, na pasta do repositório: `pip install -r requirements.txt` e confira que `git push` funciona sem pedir senha.
+2. Rode `.\rodar_local.ps1` no PowerShell. Ele faz `git pull`, roda o monitor, faz commit de `data/` e dos painéis e dá `git push`. O push na `main` dispara o workflow, que só republica o Pages. Opções: `-ForcarPainel` e `-SemPush`. Log em `logs\`. Se houver alerta e o GitHub CLI (`gh`) estiver instalado e logado, ele também abre a Issue.
+3. No GitHub: Settings → Secrets and variables → Actions → aba **Variables** → New repository variable `MODO_COLETA` = `local`. A partir daí o agendamento diário do Actions não tenta mais coletar e só republica o painel commitado (sem e-mail de falha todo dia). Para voltar a coletar no Actions, apague a variável ou mude para `actions`.
+4. Opcional, para rodar todo dia: Agendador de Tarefas do Windows → Criar Tarefa Básica → diária, 07:30 → Iniciar um programa: `powershell.exe`, argumentos `-NoProfile -ExecutionPolicy Bypass -File "<pasta do repositório>\rodar_local.ps1"`. O PC precisa estar ligado e com internet no horário.
+
+No Run workflow manual, desmarque "Coletar na ANEEL" para só republicar o painel commitado.
 
 Detalhes da fonte e armadilhas conhecidas: [docs/aneel-fonte-dados.md](docs/aneel-fonte-dados.md).

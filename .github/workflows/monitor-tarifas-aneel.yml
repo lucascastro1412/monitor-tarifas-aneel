@@ -9,12 +9,30 @@ name: Monitor Tarifas ANEEL (B3, Fio B SCEE e Grupo A)
 # Em toda execucao (com ou sem mudanca) publica o painel atual no GitHub Pages (index.html + Excel).
 # Se a execucao falhar, o GitHub tambem avisa por e-mail.
 # Disparo manual: aba Actions -> este workflow -> Run workflow.
+#
+# Modo de coleta (variavel do repositorio MODO_COLETA, em Settings > Secrets and variables > Actions > Variables):
+#   - ausente ou "actions": o proprio GitHub Actions coleta na ANEEL (padrao).
+#   - "local": a coleta roda no PC (rodar_local.ps1, que faz commit e push de data/ e dos paineis) e o
+#     Actions so publica no Pages o painel que estiver commitado. Use se a ANEEL recusar o runner.
+# Em qualquer modo, se a coleta falhar o painel ja commitado ainda e publicado; o job termina como falha
+# no fim (para o GitHub avisar por e-mail), mas o deploy do Pages nao depende do sucesso da coleta.
+# Push na main que mude o painel ou data/ (ex.: vindo do rodar_local.ps1) so republica o Pages.
 
 on:
   schedule:
     - cron: "0 10 * * *"  # 07:00 em Brasilia (UTC-3)
+  push:
+    branches: [main]
+    paths:
+      - "Painel_Tarifas_ANEEL.html"
+      - "Painel_Tarifas_ANEEL.xlsx"
+      - "data/**"
   workflow_dispatch:
     inputs:
+      coletar:
+        description: "Coletar na ANEEL (desmarque para so republicar o painel commitado)"
+        type: boolean
+        default: true
       forcar_painel:
         description: "Regerar os paineis Excel e HTML mesmo sem mudancas"
         type: boolean
@@ -36,20 +54,34 @@ jobs:
     timeout-minutes: 30
     outputs:
       tem_painel: ${{ steps.site.outputs.tem_painel }}
+    env:
+      # Coleta so em schedule ou Run workflow (com "coletar" marcado) e fora do modo local.
+      COLETAR: ${{ vars.MODO_COLETA != 'local' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.coletar)) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Modo de execucao
+        run: |
+          echo "Evento: ${{ github.event_name }} | MODO_COLETA: ${{ vars.MODO_COLETA || 'actions' }} | coletar: $COLETAR"
+          if [ "$COLETAR" != "true" ]; then
+            echo "::notice title=Sem coleta::So publica o painel commitado (modo local, push ou coletar desmarcado)."
+          fi
+
       - name: Setup Python
+        if: env.COLETAR == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Instalar dependencias
+        if: env.COLETAR == 'true'
         run: pip install -r requirements.txt
 
       - name: Executar monitor
         id: monitor
+        if: env.COLETAR == 'true'
+        continue-on-error: true
         env:
           PAINEL_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
         run: |
@@ -60,6 +92,7 @@ jobs:
           fi
 
       - name: Salvar dados e painel (commit)
+        if: steps.monitor.outcome == 'success'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898341+github-actions[bot]@users.noreply.github.com"
@@ -76,7 +109,7 @@ jobs:
           fi
 
       - name: Abrir alerta (Issue)
-        if: steps.monitor.outputs.alerta == 'true'
+        if: steps.monitor.outcome == 'success' && steps.monitor.outputs.alerta == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -84,9 +117,11 @@ jobs:
           TITULO="$(head -n1 alerta.md | sed 's/^# //')"
           gh issue create --title "$TITULO" --body-file alerta.md --label tarifa-aneel
 
-      # Site do GitHub Pages: montado em toda execucao, mesmo sem mudancas, para refletir o painel atual.
+      # Site do GitHub Pages: montado em toda execucao, mesmo sem mudancas ou com a coleta falha,
+      # a partir do painel no disco (o recem-gerado ou o ultimo commitado).
       - name: Montar site (GitHub Pages)
         id: site
+        if: always()
         run: |
           rm -rf site
           if [ -e Painel_Tarifas_ANEEL.html ]; then
@@ -101,11 +136,11 @@ jobs:
           fi
 
       - name: Configurar Pages
-        if: steps.site.outputs.tem_painel == 'true'
+        if: always() && steps.site.outputs.tem_painel == 'true'
         uses: actions/configure-pages@v5
 
       - name: Enviar site (artifact do Pages)
-        if: steps.site.outputs.tem_painel == 'true'
+        if: always() && steps.site.outputs.tem_painel == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
@@ -120,9 +155,18 @@ jobs:
             Painel_Tarifas_ANEEL.html
           if-no-files-found: ignore
 
+      # Por ultimo: marca o job como falho se a coleta falhou (o GitHub avisa por e-mail), depois de o
+      # painel existente ja ter sido enviado ao Pages.
+      - name: Resultado da coleta
+        if: always() && steps.monitor.outcome == 'failure'
+        run: |
+          echo "::error title=Coleta ANEEL falhou::Painel commitado foi publicado mesmo assim. Veja o log de 'Executar monitor'. Se a ANEEL recusou o runner, use o modo local (README)."
+          exit 1
+
   deploy:
     needs: monitorar
-    if: needs.monitorar.outputs.tem_painel == 'true'
+    # always(): publica mesmo que a coleta tenha falhado, desde que haja painel.
+    if: always() && needs.monitorar.outputs.tem_painel == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
