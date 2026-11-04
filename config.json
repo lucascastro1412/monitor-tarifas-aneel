@@ -1,0 +1,7 @@
+{
+  "distribuidoras_portfolio": [],
+  "limiar_alerta_pct": 0.0,
+  "fiob_ano_inicial": 2026,
+  "subgrupos_grupo_a": ["A4", "A3"],
+  "grupo_a_ano_inicial": 2016
+}

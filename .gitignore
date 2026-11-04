@@ -1,0 +1,5 @@
+alerta.md
+__pycache__/
+~$*.xlsx
+*.parquet
+site/

@@ -1,0 +1,134 @@
+name: Monitor Tarifas ANEEL (B3, Fio B SCEE e Grupo A)
+
+# Rotina diaria: roda 1 vez por dia, as 07:00 de Brasilia (10:00 UTC).
+# Fonte: arquivos Parquet de dados abertos da ANEEL (B3, Grupo A A4/A3 e Fio B). Da API so usa package_show,
+# para saber se o arquivo mudou (last_modified); so baixa de novo o Parquet que mudou.
+# Quando detecta nova homologacao (REH/Despacho) ou valor alterado:
+#   - atualiza data/*.csv e os paineis Painel_Tarifas_ANEEL.xlsx e .html (commit automatico)
+#   - abre uma Issue com o resumo (o GitHub envia por e-mail a quem acompanha o repo)
+# Em toda execucao (com ou sem mudanca) publica o painel atual no GitHub Pages (index.html + Excel).
+# Se a execucao falhar, o GitHub tambem avisa por e-mail.
+# Disparo manual: aba Actions -> este workflow -> Run workflow.
+
+on:
+  schedule:
+    - cron: "0 10 * * *"  # 07:00 em Brasilia (UTC-3)
+  workflow_dispatch:
+    inputs:
+      forcar_painel:
+        description: "Regerar os paineis Excel e HTML mesmo sem mudancas"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  issues: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: monitor-tarifas-aneel
+  cancel-in-progress: false
+
+jobs:
+  monitorar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      tem_painel: ${{ steps.site.outputs.tem_painel }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Executar monitor
+        id: monitor
+        env:
+          PAINEL_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+        run: |
+          if [ "${{ inputs.forcar_painel }}" = "true" ]; then
+            python monitor_tarifas.py --forcar-painel
+          else
+            python monitor_tarifas.py
+          fi
+
+      - name: Salvar dados e painel (commit)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898341+github-actions[bot]@users.noreply.github.com"
+          git add -A data
+          for f in Painel_Tarifas_ANEEL.xlsx Painel_Tarifas_ANEEL.html; do
+            if [ -e "$f" ]; then git add "$f"; fi
+          done
+          if git diff --cached --quiet; then
+            echo "Nada novo para salvar."
+          else
+            git commit -m "Monitor tarifas ANEEL: atualizacao $(date -u +%Y-%m-%dT%H:%MZ)"
+            git pull --rebase
+            git push
+          fi
+
+      - name: Abrir alerta (Issue)
+        if: steps.monitor.outputs.alerta == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create tarifa-aneel --color FBCA04 --description "Alertas do monitor de tarifas ANEEL" --force
+          TITULO="$(head -n1 alerta.md | sed 's/^# //')"
+          gh issue create --title "$TITULO" --body-file alerta.md --label tarifa-aneel
+
+      # Site do GitHub Pages: montado em toda execucao, mesmo sem mudancas, para refletir o painel atual.
+      - name: Montar site (GitHub Pages)
+        id: site
+        run: |
+          rm -rf site
+          if [ -e Painel_Tarifas_ANEEL.html ]; then
+            mkdir -p site
+            cp Painel_Tarifas_ANEEL.html site/index.html
+            if [ -e Painel_Tarifas_ANEEL.xlsx ]; then cp Painel_Tarifas_ANEEL.xlsx site/; fi
+            ls -la site
+            echo "tem_painel=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Painel nao encontrado; nada a publicar no Pages."
+            echo "tem_painel=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configurar Pages
+        if: steps.site.outputs.tem_painel == 'true'
+        uses: actions/configure-pages@v5
+
+      - name: Enviar site (artifact do Pages)
+        if: steps.site.outputs.tem_painel == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Publicar painel (artifact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: painel-tarifas-aneel
+          path: |
+            Painel_Tarifas_ANEEL.xlsx
+            Painel_Tarifas_ANEEL.html
+          if-no-files-found: ignore
+
+  deploy:
+    needs: monitorar
+    if: needs.monitorar.outputs.tem_painel == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publicar no GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
