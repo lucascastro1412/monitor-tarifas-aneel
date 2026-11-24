@@ -1676,7 +1676,7 @@ def desagio_por_preco(r: dict, preco_kwh: float) -> float | None:
 # ------------------------------------------------------------ visao de negociacao (arrendamento)
 
 NEG_ABERTURA_PP = 0.10      # abertura da faixa: desagio atual + 10 p.p.
-NEG_MARGEM_MIN = 0.20       # margem minima padrao da Thopen, em % de W_I (liquida do desconto ao cliente)
+NEG_MARGEM_MIN = 0.20       # margem minima padrao da Thopen, em % do valor compensado (liquida do desconto ao cliente)
 NEG_PRAZO, NEG_TAXA = 10, 0.12
 NEG_DEGRADACAO = {"ufv": 0.005, "cgh": 0.0, "direto": 0.0}
 
@@ -1970,20 +1970,22 @@ def textos_impostos(visoes: dict) -> list[str]:
     esc = ", ".join(f"{a} {int(v * 100)}%" for a, v in ESCALONAMENTO_FIOB.items())
     return [
         "IMPOSTOS E CALCULADORA GD (aba Calculadora, Tabela Thopen e colunas com tributos): mesma regra da planilha "
-        "Tarifas.xlsx do usuario, com gross-up em cascata. D = TUSD, E = TE, i = ICMS, pc = PIS + COFINS; "
-        "k_PC = 1/(1-pc); k_full = 1/((1-i)(1-pc)).",
-        "U (tarifa sem tributos) = D + E. V (tarifa cheia, com tributos) = U x k_full. W (valor da energia compensada, "
-        "com os tributos evitados) = (D - FB_ef) x k_TUSD + E x k_TE, com k_TE = k_full se o ICMS da TE entra no "
-        "beneficio (flag 1) e k_PC se nao entra (flag 0); k_TUSD idem. Y (beneficio tributario) = W - (U - FB_ef). "
-        "X (VB) = s x Y, s = repasse (50%; 70% na Cemig, como na planilha). Z (COMP) = (U - FB_ef) + X. "
-        "Preco de venda P = (1 - d) x U (desagio d sobre a tarifa sem tributos, mesma base do Arrendamento); "
-        "desagio implicito do preco = 1 - P / U. Economia do cliente = W - P (credito da energia compensada menos o "
-        "preco). Pagamento ao dono (opcao A, igual ao Arrendamento, Fio B com impostos) = P + s x Y_I - FB_ef x k_full, "
-        "com Y_I = W_I - U (W_I sem Fio B); desagio implicito do dono = 1 - dono / U. Fio B residual com tributos = "
-        "FB_ef x k_full.",
-        f"FB_ef: GD I = 0 (reproduz a planilha 1:1); GD II e GD III = Fio B SCEE x % do ano da Lei 14.300 ({esc}; "
+        "Tarifas.xlsx do usuario, com gross-up em cascata. Fator de PIS/COFINS = 1 / (1 - PIS/COFINS); fator de "
+        "impostos (ICMS e PIS/COFINS) = 1 / ((1 - ICMS) x (1 - PIS/COFINS)).",
+        "Tarifa sem impostos = TUSD + TE. Tarifa com impostos = tarifa sem impostos x fator de impostos. Valor "
+        "compensado (valor da energia compensada, com os tributos evitados) = (TUSD - Fio B efetivo) x fator de impostos "
+        "da TUSD + TE x fator de impostos da TE; o fator da TE e o fator de impostos completo se o ICMS da TE entra no "
+        "beneficio (flag 1) e o fator de PIS/COFINS se nao entra (flag 0); TUSD idem. Beneficio fiscal = valor "
+        "compensado - (tarifa sem impostos - Fio B efetivo). VB = VB do dono x beneficio fiscal (VB do dono padrao 50%; "
+        "70% na Cemig, como na planilha). COMP = (tarifa sem impostos - Fio B efetivo) + VB. Preco de venda = (1 - "
+        "desagio) x tarifa sem impostos (mesma base do Arrendamento); desagio implicito do preco = 1 - preco / tarifa "
+        "sem impostos. Economia do cliente = valor compensado - preco. Pagamento ao dono (opcao A, igual ao "
+        "Arrendamento, Fio B com impostos) = preco + VB do dono x beneficio fiscal sem Fio B - Fio B efetivo x fator de "
+        "impostos, com beneficio fiscal sem Fio B = valor compensado sem Fio B - tarifa sem impostos; desagio implicito "
+        "do dono = 1 - dono / tarifa sem impostos. Fio B residual com tributos = Fio B efetivo x fator de impostos.",
+        f"Fio B efetivo: GD I = 0 (reproduz a planilha 1:1); GD II e GD III = Fio B SCEE x % do ano da Lei 14.300 ({esc}; "
         "2029 em diante aproximado por 100%). Na calculadora o % vem da data de referencia; nas demais abas, "
-        "W GD II usa o Fio B efetivo da vigencia atual. GD III pela Lei 14.300 (art. 27, par. 1o) paga ainda 40% do "
+        "o valor compensado GD II usa o Fio B efetivo da vigencia atual. GD III pela Lei 14.300 (art. 27, par. 1o) paga ainda 40% do "
         "Fio A, TFSEE e P&D/EE, o que nao esta modelado.",
         f"Aliquotas: {meta['origem']} ({ARQ_IMPOSTOS}): media do subgrupo B3 se houver, senao TOTAL. "
         f"{atual}"
@@ -2011,45 +2013,53 @@ def textos_arrendamento() -> list[str]:
     return [
         "ARRENDAMENTO DE USINAS (aba Arrendamento e Excel, aba Arrendamento (referencia)): a Thopen arrenda a usina, "
         "recebe o valor da energia compensada (tarifa mais o beneficio fiscal dos tributos evitados) e paga o dono "
-        "com desagio. Por MWh compensado: U = D + E; W_I = D x k_TUSD + E x k_TE (forma da planilha, GD I, sem Fio B); "
-        "Y = W_I - U (beneficio fiscal); FB_ef = Fio B SCEE x % da Lei 14.300 do ano (0 em GD I).",
-        "Opcao A: o desagio d incide so sobre a tarifa e o beneficio fiscal e dividido pelo VB s (parte do dono; "
-        "padrao 50%, Cemig 70%). Pagamento ao dono = (1 - d) x U + s x Y - custo do Fio B. Parte da Thopen = "
-        "d x U + (1 - s) x Y. Conferencia: dono + Thopen + custo do Fio B = W_I. O dono paga o Fio B: padrao com "
-        "impostos (FB_ef x k_full, o custo que aparece na fatura), ou sem impostos (FB_ef), por seletor.",
-        "Desconto ao cliente final = c x W_I (c em % do valor ao cliente, padrao 0%). Margem liquida da Thopen = "
-        "parte da Thopen - desconto. Desagio nominal = d (parametro, so sobre U). Desagio implicito = 1 - "
-        "pagamento ao dono / U (sobre a tarifa sem tributos, liquido do VB e do Fio B): diminui quando o VB s "
-        "aumenta, aumenta com o Fio B e fica negativo quando o dono recebe mais que a tarifa U.",
-        "Desagio do dono sobre tres bases: sobre a tarifa sem impostos = 1 - dono / U (o desagio implicito); sobre a "
-        "tarifa com impostos = 1 - dono / V, V = U x k_full; e, como referencia, sobre o valor compensado = 1 - dono / "
-        "W_I. Preco ao parceiro (dono da usina) em R$/kWh = dono / 1.000: e o pagamento liquido ao dono por kWh "
+        "com desagio. Por MWh compensado: tarifa sem impostos = TUSD + TE; valor compensado na conta do cliente = "
+        "TUSD x fator de impostos da TUSD + TE x fator de impostos da TE (forma da planilha, GD I, sem Fio B); "
+        "beneficio fiscal = valor compensado - tarifa sem impostos; Fio B efetivo = Fio B SCEE x % da Lei 14.300 do "
+        "ano (0 em GD I).",
+        "Opcao A: o desagio nominal incide so sobre a tarifa e o beneficio fiscal e dividido pelo VB do dono (parte do "
+        "beneficio fiscal que vai para o dono; padrao 50%, Cemig 70%). Pagamento ao dono = (1 - desagio nominal) x "
+        "tarifa sem impostos + VB do dono x beneficio fiscal - custo do Fio B. Parte da Thopen = desagio nominal x "
+        "tarifa sem impostos + (1 - VB do dono) x beneficio fiscal. Conferencia: dono + Thopen + custo do Fio B = "
+        "valor compensado. O dono paga o Fio B: padrao com impostos (Fio B efetivo x fator de impostos, o custo que "
+        "aparece na fatura), ou sem impostos (Fio B efetivo), por seletor.",
+        "Desconto ao cliente final = desconto ao cliente (%) x valor compensado (padrao 0%). Margem liquida da Thopen = "
+        "parte da Thopen - desconto. Desagio nominal: parametro, so sobre a tarifa sem impostos. Desagio implicito = 1 - "
+        "pagamento ao dono / tarifa sem impostos (liquido do VB e do Fio B): diminui quando o VB do dono aumenta, "
+        "aumenta com o Fio B e fica negativo quando o dono recebe mais que a tarifa sem impostos.",
+        "Desagio do dono sobre tres bases: sobre a tarifa sem impostos = 1 - dono / tarifa sem impostos (o desagio "
+        "implicito); sobre a tarifa com impostos = 1 - dono / tarifa com impostos (tarifa sem impostos x fator de "
+        "impostos); e, como referencia, sobre o valor compensado = 1 - dono / valor compensado. Preco ao parceiro (dono da usina) em R$/kWh = dono / 1.000: e o pagamento liquido ao dono por kWh "
         "compensado, ja descontado o custo do Fio B (a mesma grandeza 'dono' do modelo).",
-        "Condicoes comerciais, 'Definir por': Desagio (%) ou Preco ao parceiro (R$/kWh). No modo preco, P_MWh = "
-        "1.000 x P e o desagio nominal equivalente sai da formula fechada do calculo reverso, com o VB s fixo: d = 1 - "
-        "(P_MWh + custo_FioB - s x Y) / U. Todas as saidas (cards, memoria, sensibilidade, faixa, projecao e textos) "
-        "usam esse d. Se d sair de 0 a 100% o calculo continua, com destaque. No modo desagio o painel mostra o preco "
+        "Condicoes comerciais, 'Definir por': Desagio (%) ou Preco ao parceiro (R$/kWh). No modo preco, o desagio "
+        "nominal equivalente sai da formula fechada do calculo reverso, com o VB do dono fixo: desagio nominal = 1 - "
+        "(1.000 x preco ao parceiro + custo do Fio B - VB do dono x beneficio fiscal) / tarifa sem impostos. Todas as "
+        "saidas (cards, memoria, sensibilidade, faixa, projecao e textos) usam esse desagio. Se o desagio sair de 0 a 100% o calculo continua, com destaque. No modo desagio o painel mostra o preco "
         "resultante em R$/kWh. Alternar entre os modos preserva o negocio (o campo do outro modo recebe o valor atual). "
-        "Quadro 'Tarifas da distribuidora': TUSD, TE, U, V, W_I, Y, Fio B SCEE, Fio B efetivo e custo do Fio B com "
+        "Quadro 'Tarifas da distribuidora': TUSD, TE, tarifa sem e com impostos, valor compensado, beneficio fiscal, Fio B SCEE, Fio B efetivo e custo do Fio B com "
         "impostos em R$/kWh e R$/MWh, ICMS e PIS+COFINS com a fonte, vigencia e os tres desagios.",
         f"Geracao: UFV = kWp x produtividade (kWh/kWp/ano, padrao da UF em {ARQ_PRODUTIVIDADE}, referencia "
         "aproximada para sistema fixo derivada do Atlas Brasileiro de Energia Solar, INPE/LABREN; editavel) / 12 x "
         f"(1 - perdas); CGH ou outra = kW x fator de capacidade (padrao {int(ARR_FC_CGH * 100)}%) x "
         f"{int(ARR_HORAS_MES)} h; ou MWh/mes informado. Energia compensada = geracao x % que vira credito.",
         "Premissas: estimativa; sem bandeiras, sem CIP, sem custo de disponibilidade, sem inadimplencia, O&M, "
-        "seguros ou impostos sobre a receita do arrendamento. GD III segue a mesma regra de FB_ef da calculadora; "
+        "seguros ou impostos sobre a receita do arrendamento. GD III segue a mesma regra de Fio B efetivo da calculadora; "
         "pela Lei 14.300 (art. 27, par. 1o) ela paga 100% do Fio B mais 40% do Fio A, TFSEE e P&D/EE, o que nao "
         "esta modelado (o % do Fio B e editavel). Tabela de referencia no Excel: usina de 1 MWh/mes compensado, "
-        "d = 30% e s = 50% para todas, Fio B com impostos, GD II e GD III com o Fio B efetivo da vigencia atual.",
-        "VISAO DE NEGOCIACAO (aba Arrendamento): proposta ao dono (R$/MWh, R$/mes, R$/ano; dono / W_I; dono / U; "
-        "desagio nominal e implicito; Fio B pago pelo dono). Calculo reverso, linear em d e em s, com custo_FioB = "
-        "FB_ef x k_full (ou FB_ef): pedido do dono em R$/MWh (R$/mes / MWh compensado no mes) -> d = 1 - (dono + "
-        "custo_FioB - s x Y) / U com o s atual, ou s = (dono + custo_FioB - (1 - d) x U) / Y com o d atual. Margem "
-        "minima da Thopen m (R$/MWh, R$/mes ou % de W_I, ja liquida do desconto c x W_I) -> d_min = (m + c x W_I - "
-        "(1 - s) x Y) / U, ou s_max = 1 - (m + c x W_I - d x U) / Y; pagamento maximo ao dono (teto da negociacao) = "
-        "W_I - custo_FioB - c x W_I - m. Sem solucao quando o valor resolvido sai de 0 a 100%, U = 0 (resolver d) "
-        "ou Y = 0 (resolver s, o VB nao muda nada). Faixa de negociacao: Abertura (padrao d atual + 10 p.p.), Alvo "
-        "(configuracao atual) e Limite (d_min ou s_max da margem minima), editaveis; coluna em vermelho quando a "
+        "desagio nominal 30% e VB do dono 50% para todas, Fio B com impostos, GD II e GD III com o Fio B efetivo da vigencia atual.",
+        "VISAO DE NEGOCIACAO (aba Arrendamento): proposta ao dono (R$/MWh, R$/mes, R$/ano; dono / valor compensado; "
+        "dono / tarifa sem impostos; desagio nominal e implicito; Fio B pago pelo dono). Calculo reverso, linear no "
+        "desagio nominal e no VB do dono, com custo do Fio B = Fio B efetivo x fator de impostos (ou Fio B efetivo): "
+        "pedido do dono em R$/MWh (R$/mes / MWh compensado no mes) -> desagio nominal = 1 - (dono + custo do Fio B - "
+        "VB do dono x beneficio fiscal) / tarifa sem impostos com o VB do dono atual, ou VB do dono = (dono + custo do "
+        "Fio B - (1 - desagio nominal) x tarifa sem impostos) / beneficio fiscal com o desagio atual. Margem minima da "
+        "Thopen (R$/MWh, R$/mes ou % do valor compensado, ja liquida do desconto ao cliente) -> desagio minimo = "
+        "(margem + desconto ao cliente - (1 - VB do dono) x beneficio fiscal) / tarifa sem impostos, ou VB do dono "
+        "maximo = 1 - (margem + desconto ao cliente - desagio nominal x tarifa sem impostos) / beneficio fiscal; "
+        "pagamento maximo ao dono (teto da negociacao) = valor compensado - custo do Fio B - desconto ao cliente - "
+        "margem. Sem solucao quando o valor resolvido sai de 0 a 100%, tarifa sem impostos = 0 (resolver o desagio) "
+        "ou beneficio fiscal = 0 (resolver o VB, que nao muda nada). Faixa de negociacao: Abertura (padrao desagio "
+        "atual + 10 p.p.), Alvo (configuracao atual) e Limite (desagio minimo ou VB maximo da margem minima), editaveis; coluna em vermelho quando a "
         "margem fica abaixo da minima.",
         f"Projecao do contrato (padrao {NEG_PRAZO} anos a partir do ano da data de referencia): no ano t (t = 0 no "
         "primeiro ano) D, E e o Fio B SCEE sao multiplicados por (1 + reajuste)^t (padrao: IPCA acumulado dos ultimos "
@@ -2162,21 +2172,21 @@ CABEC_RS |= {"TUSD energia FP", "TE energia FP", "Energia FP", "TUSD energia P",
 
 
 # Calculadora e impostos
-CABEC_PCT |= {"ICMS", "PIS", "COFINS", "PIS+COFINS", "Repasse s", "Diferenca % vs planilha",
+CABEC_PCT |= {"ICMS", "PIS", "COFINS", "PIS+COFINS", "VB do dono", "Diferenca % vs planilha",
               "icms_media", "icms_mediana", "icms_min", "icms_max", "pis_media", "cofins_media",
               "pis_cofins_ultimo_mes"}
-CABEC_RS |= {"U tarifa sem tributos", "V tarifa cheia", "W GD I", "Y GD I", "X GD I", "Z GD I", "W GD II",
-             "Y GD II", "X GD II", "Z GD II", "Fio B residual com tributos", "TUSD planilha", "TE planilha",
+CABEC_RS |= {"Tarifa sem impostos (TUSD+TE)", "Tarifa com impostos", "Valor compensado GD I", "Beneficio fiscal GD I", "VB GD I", "COMP GD I", "Valor compensado GD II",
+             "Beneficio fiscal GD II", "VB GD II", "COMP GD II", "Fio B residual com tributos", "TUSD planilha", "TE planilha",
              "TUSD+TE na planilha", "Diferenca vs planilha"}
 # Arrendamento (referencia)
-CABEC_PCT |= {"Desagio d", "VB s"} | {f"{p} {g}" for p in ("Desagio implicito", "Desagio sobre V")
+CABEC_PCT |= {"Desagio nominal", "VB do dono"} | {f"{p} {g}" for p in ("Desagio implicito", "Desagio sobre tarifa com impostos")
                                       for g in ("GD I", "GD II", "GD III")}
 CABEC_RS |= {f"{p} {g}" for p in ("Custo Fio B", "Dono", "Thopen") for g in ("GD I", "GD II", "GD III")}
-CABEC_RS |= {"V tarifa com impostos"}
+CABEC_RS |= {"Tarifa com impostos"}
 CABEC_KWH = {f"Preco dono {g} (R$/kWh)" for g in ("GD I", "GD II", "GD III")} | {"Preco dono (R$/kWh)"}
 # Negociacao (referencia)
-CABEC_PCT |= {"% Fio B (Lei 14.300)", "Desagio implicito", "Desagio sobre V", "Desagio sobre W_I"}
-CABEC_RS |= {"Y beneficio fiscal", "Custo Fio B (R$/MWh)", "Dono (R$/MWh)", "Geracao (MWh/ano)", "Dono (R$/ano)",
+CABEC_PCT |= {"% Fio B (Lei 14.300)", "Desagio implicito", "Desagio sobre tarifa com impostos", "Desagio sobre valor compensado"}
+CABEC_RS |= {"Beneficio fiscal", "Custo Fio B (R$/MWh)", "Dono (R$/MWh)", "Geracao (MWh/ano)", "Dono (R$/ano)",
              "Thopen (R$/ano)", "Margem liquida (R$/ano)"}
 
 
@@ -2194,11 +2204,11 @@ def abas_impostos(visoes: dict) -> list[tuple]:
         "Distribuidora": m["Distribuidora"], "UF": m["uf"], "Ativa": m["ativa"].map(lambda v: "Sim" if v else "Nao"),
         "Inicio vigencia": data(m["inicio"]), "TUSD": m["tusd"], "TE": m["te"], "ICMS": m["icms"],
         "PIS+COFINS": m["pc"], "ICMS da TE na compensada": flag(m["flag_te"]),
-        "ICMS da TUSD na compensada": flag(m["flag_tusd"]), "Repasse s": m["s"],
-        "U tarifa sem tributos": m["U"], "V tarifa cheia": m["V"], "W GD I": m["W1"], "Y GD I": m["Y1"],
-        "X GD I": m["X1"], "Z GD I": m["Z1"], "Fio B SCEE": m["fiob"].where(~m["fiob_suspeito"]),
-        "% Lei 14.300": m["escalonamento"], "Fio B efetivo": m["fb_ef"], "W GD II": m["W2"], "Y GD II": m["Y2"],
-        "X GD II": m["X2"], "Z GD II": m["Z2"], "Fio B residual com tributos": m["fb_res"],
+        "ICMS da TUSD na compensada": flag(m["flag_tusd"]), "VB do dono": m["s"],
+        "Tarifa sem impostos (TUSD+TE)": m["U"], "Tarifa com impostos": m["V"], "Valor compensado GD I": m["W1"], "Beneficio fiscal GD I": m["Y1"],
+        "VB GD I": m["X1"], "COMP GD I": m["Z1"], "Fio B SCEE": m["fiob"].where(~m["fiob_suspeito"]),
+        "% Lei 14.300": m["escalonamento"], "Fio B efetivo": m["fb_ef"], "Valor compensado GD II": m["W2"], "Beneficio fiscal GD II": m["Y2"],
+        "VB GD II": m["X2"], "COMP GD II": m["Z2"], "Fio B residual com tributos": m["fb_res"],
         "Sigla na planilha": m["ref_sigla"], "TUSD+TE na planilha": m["ref_total"],
         "Diferenca vs planilha": m["ref_dif"], "Diferenca % vs planilha": m["ref_dif"] / m["ref_total"],
         "Fonte aliquotas": m["fonte_icms"], "Fonte flags": m["fonte_flags"], "Observacao": m["obs"],
@@ -2207,7 +2217,7 @@ def abas_impostos(visoes: dict) -> list[tuple]:
         "Distribuidora": m["Distribuidora"], "CNPJ": m["cnpj"], "UF": m["uf"], "ICMS": m["icms"],
         "Fonte ICMS": m["fonte_icms"], "PIS": m["pis"], "COFINS": m["cofins"], "PIS+COFINS": m["pc"],
         "Fonte PIS/COFINS": m["fonte_pc"], "ICMS da TE na compensada": flag(m["flag_te"]),
-        "ICMS da TUSD na compensada": flag(m["flag_tusd"]), "Repasse s": m["s"], "Fonte flags": m["fonte_flags"],
+        "ICMS da TUSD na compensada": flag(m["flag_tusd"]), "VB do dono": m["s"], "Fonte flags": m["fonte_flags"],
         "Observacao": m["obs"]})
     abas = [("Calculadora (tabela)", calc, False, "tl"), ("Impostos", aliq, False, "tl")]
     fat = visoes.get("imp_faturas")
@@ -2242,13 +2252,13 @@ def tabela_negociacao(m: pd.DataFrame, visoes: dict) -> pd.DataFrame:
                                   ano_ini=hoje.year, reajuste=reaj, degradacao=0.0, taxa=NEG_TAXA)
         base = {"Distribuidora": r["Distribuidora"], "UF": str(r.get("uf") or "")}
         for a in p["anos"]:
-            linhas.append({**base, "Ano": a["ano"], "% Fio B (Lei 14.300)": a["pct_fb"], "U tarifa sem tributos": a["U"],
-                           "Y beneficio fiscal": a["Y"], "Custo Fio B (R$/MWh)": a["custo_fb"],
+            linhas.append({**base, "Ano": a["ano"], "% Fio B (Lei 14.300)": a["pct_fb"], "Tarifa sem impostos (TUSD+TE)": a["U"],
+                           "Beneficio fiscal": a["Y"], "Custo Fio B (R$/MWh)": a["custo_fb"],
                            "Dono (R$/MWh)": a["dono_mwh"], "Geracao (MWh/ano)": a["mwh_ano"],
                            "Dono (R$/ano)": a["dono"], "Thopen (R$/ano)": a["thopen"],
                            "Margem liquida (R$/ano)": a["margem"], "Preco dono (R$/kWh)": a["preco_kwh"],
-                           "Desagio implicito": a["desagio_impl"], "Desagio sobre V": a["desagio_v"],
-                           "Desagio sobre W_I": a["desagio_wi"]})
+                           "Desagio implicito": a["desagio_impl"], "Desagio sobre tarifa com impostos": a["desagio_v"],
+                           "Desagio sobre valor compensado": a["desagio_wi"]})
         linhas.append({**base, "Ano": f"Total {NEG_PRAZO} anos", "Geracao (MWh/ano)": p["total"]["mwh_ano"],
                        "Dono (R$/ano)": p["total"]["dono"], "Thopen (R$/ano)": p["total"]["thopen"],
                        "Margem liquida (R$/ano)": p["total"]["margem"]})
@@ -2257,8 +2267,8 @@ def tabela_negociacao(m: pd.DataFrame, visoes: dict) -> pd.DataFrame:
     t = pd.DataFrame(linhas)
     if len(t):
         t["Premissas"] = ""
-        t.loc[t.index[0], "Premissas"] = (f"1 MWh/mes compensado, d = {int(ARR_DESAGIO * 100)}%, s = {int(ARR_VB * 100)}%, "
-                                          f"c = 0, GD II, Fio B com impostos e escalonamento da Lei 14.300 (2029+ 100%), "
+        t.loc[t.index[0], "Premissas"] = (f"1 MWh/mes compensado, desagio nominal {int(ARR_DESAGIO * 100)}%, VB do dono {int(ARR_VB * 100)}%, "
+                                          f"desconto ao cliente 0, GD II, Fio B com impostos e escalonamento da Lei 14.300 (2029+ 100%), "
                                           f"reajuste anual {br(reaj * 100)}% (IPCA 12 meses), sem degradacao, "
                                           f"VPL a {int(NEG_TAXA * 100)}% a.a. com fluxos no fim de cada ano")
     return t
@@ -2282,9 +2292,9 @@ def tabela_arrendamento(m: pd.DataFrame, prod: dict) -> pd.DataFrame:
                  "TUSD": r["tusd"], "TE": r["te"], "ICMS": r["icms"], "PIS+COFINS": r["pc"],
                  "ICMS da TE na compensada": "Sim" if r["flag_te"] == 1 else "Nao",
                  "ICMS da TUSD na compensada": "Sim" if r["flag_tusd"] == 1 else "Nao",
-                 "U tarifa sem tributos": g1["U"], "V tarifa com impostos": g1["V"], "W GD I": g1["W_I"],
-                 "Y GD I": g1["Y"],
-                 "Desagio d": ARR_DESAGIO, "VB s": ARR_VB,
+                 "Tarifa sem impostos (TUSD+TE)": g1["U"], "Tarifa com impostos": g1["V"], "Valor compensado GD I": g1["W_I"],
+                 "Beneficio fiscal GD I": g1["Y"],
+                 "Desagio nominal": ARR_DESAGIO, "VB do dono": ARR_VB,
                  "Fio B efetivo": fb if pd.notna(fb) else None}
         for nome, g in (("GD I", g1), ("GD II", g2), ("GD III", g2)):
             linha[f"Custo Fio B {nome}"] = g["custo_fb"] if g else None
@@ -2292,13 +2302,13 @@ def tabela_arrendamento(m: pd.DataFrame, prod: dict) -> pd.DataFrame:
             linha[f"Thopen {nome}"] = g["thopen"] if g else None
             linha[f"Preco dono {nome} (R$/kWh)"] = g["preco_kwh"] if g else None
             linha[f"Desagio implicito {nome}"] = g["desagio_impl"] if g else None  # 1 - dono / U
-            linha[f"Desagio sobre V {nome}"] = g["desagio_v"] if g else None  # 1 - dono / V
+            linha[f"Desagio sobre tarifa com impostos {nome}"] = g["desagio_v"] if g else None  # 1 - dono / V
         linha["Produtividade UFV UF (kWh/kWp/ano)"] = prod.get(uf, (None, ""))[0]
         linhas.append(linha)
     t = pd.DataFrame(linhas)
     if len(t):
         for c in t.columns:
-            if c.startswith(("Custo Fio B", "Dono ", "Thopen ", "Desagio implicito", "Desagio sobre V", "Preco dono"))                     or c == "Fio B efetivo":
+            if c.startswith(("Custo Fio B", "Dono ", "Thopen ", "Desagio implicito", "Desagio sobre tarifa com impostos", "Preco dono"))                     or c == "Fio B efetivo":
                 t[c] = pd.to_numeric(t[c], errors="coerce")
     return t
 
@@ -3057,8 +3067,8 @@ a{color:var(--azul2)}
       <label>Data de referência<input type="date" id="c-data"></label>
       <label>Enquadramento<select id="c-enq" style="min-width:140px"><option value="1">GD I</option><option value="2">GD II</option><option value="3">GD III</option></select></label>
       <label>% do Fio B pago (Lei 14.300)<input type="text" inputmode="decimal" id="c-pfb"></label>
-      <label>TUSD D (R$/MWh)<input type="text" inputmode="decimal" id="c-tusd"></label>
-      <label>TE E (R$/MWh)<input type="text" inputmode="decimal" id="c-te"></label>
+      <label>TUSD (R$/MWh)<input type="text" inputmode="decimal" id="c-tusd"></label>
+      <label>TE (R$/MWh)<input type="text" inputmode="decimal" id="c-te"></label>
       <label>Fio B SCEE (R$/MWh)<input type="text" inputmode="decimal" id="c-fb"></label>
     </div>
     <h3>Tributos e repasse <span class="selo-imp" id="c-selo"></span></h3>
@@ -3068,11 +3078,11 @@ a{color:var(--azul2)}
       <label>COFINS (%)<input type="text" inputmode="decimal" id="c-cof"></label>
       <label>ICMS da TE na energia compensada<select id="c-fte" style="min-width:200px"><option value="1">Sim (entra no benefício)</option><option value="0">Não</option></select></label>
       <label>ICMS da TUSD na energia compensada<select id="c-ftu" style="min-width:200px"><option value="1">Sim (entra no benefício)</option><option value="0">Não</option></select></label>
-      <label>Repasse s (%)<input type="text" inputmode="decimal" id="c-s"></label>
+      <label>VB do dono (%)<input type="text" inputmode="decimal" id="c-s"></label>
     </div>
     <h3>Preço</h3>
     <div class="campos">
-      <label>Informar<select id="c-modo" style="min-width:200px"><option value="d">Deságio (%) sobre U (tarifa sem tributos)</option><option value="p">Preço de venda (R$/MWh)</option></select></label>
+      <label>Informar<select id="c-modo" style="min-width:200px"><option value="d">Deságio (%) sobre a tarifa sem impostos (TUSD + TE)</option><option value="p">Preço de venda (R$/MWh)</option></select></label>
       <label><span id="c-preco-rot">Deságio (%)</span><input type="text" inputmode="decimal" id="c-preco"></label>
     </div>
     <div class="nota-sim" id="c-fontes"></div>
@@ -3091,7 +3101,7 @@ a{color:var(--azul2)}
     <div class="sim-res" id="c-fat-res"></div>
     <div class="tab" id="c-fat-tab"></div>
     <div class="avisos"><b>Estimativa, não é a fatura real.</b> Regras simplificadas: energia compensada limitada ao consumo menos o custo de disponibilidade;
-      energia não compensada e bandeira pela tarifa cheia com tributos; na energia compensada a unidade paga V - W (tributos não evitados e Fio B residual);
+      energia não compensada e bandeira pela tarifa cheia com tributos; na energia compensada a unidade paga a tarifa com impostos menos o valor compensado (tributos não evitados e Fio B residual);
       CIP fixa; sem multas, juros, ajustes, outros créditos, demanda ou tarifa social. Para GD III, falta o Fio A, TFSEE e P&amp;D/EE.</div>
   </section>
 </div>
@@ -3111,8 +3121,8 @@ a{color:var(--azul2)}
       <label>Data de referência<input type="date" id="a-data"></label>
       <label>Enquadramento<select id="a-enq" style="min-width:140px"><option value="1">GD I</option><option value="2">GD II</option><option value="3">GD III</option></select></label>
       <label>% do Fio B pago (Lei 14.300)<input type="text" inputmode="decimal" id="a-pfb"></label>
-      <label>TUSD D (R$/MWh)<input type="text" inputmode="decimal" id="a-tusd"></label>
-      <label>TE E (R$/MWh)<input type="text" inputmode="decimal" id="a-te"></label>
+      <label>TUSD (R$/MWh)<input type="text" inputmode="decimal" id="a-tusd"></label>
+      <label>TE (R$/MWh)<input type="text" inputmode="decimal" id="a-te"></label>
       <label>Fio B SCEE (R$/MWh)<input type="text" inputmode="decimal" id="a-fb"></label>
     </div>
     <h3>Tributos <span class="selo-imp" id="a-selo"></span></h3>
@@ -3122,15 +3132,15 @@ a{color:var(--azul2)}
       <label>COFINS (%)<input type="text" inputmode="decimal" id="a-cof"></label>
       <label>ICMS da TE na energia compensada<select id="a-fte" style="min-width:200px"><option value="1">Sim (entra no benefício)</option><option value="0">Não</option></select></label>
       <label>ICMS da TUSD na energia compensada<select id="a-ftu" style="min-width:200px"><option value="1">Sim (entra no benefício)</option><option value="0">Não</option></select></label>
-      <label>Custo do Fio B para o dono<select id="a-fbmodo" style="min-width:260px"><option value="1">Com impostos (FB_ef x k_full, como na fatura)</option><option value="0">Sem impostos (FB_ef)</option></select></label>
+      <label>Custo do Fio B para o dono<select id="a-fbmodo" style="min-width:260px"><option value="1">Com impostos (Fio B efetivo x fator de impostos, como na fatura)</option><option value="0">Sem impostos (Fio B efetivo)</option></select></label>
     </div>
     <h3>Condições comerciais</h3>
     <div class="campos">
       <label>Definir por<select id="a-modo" style="min-width:220px"><option value="d">Deságio (%)</option><option value="p">Preço ao parceiro (R$/kWh)</option></select></label>
-      <label id="a-d-lab">Deságio d sobre a tarifa (%)<input type="text" inputmode="decimal" id="a-d"></label>
-      <label id="a-p-lab" style="display:none" title="Pagamento líquido ao dono da usina por kWh compensado, já descontado o custo do Fio B">Preço ao parceiro P (R$/kWh, líquido do Fio B)<input type="text" inputmode="decimal" id="a-p" placeholder="ex.: 0,45"></label>
-      <label title="Repasse do benefício fiscal (Y = W_I - U) ao dono. 0% = 100% da Thopen; 50% = metade para cada um.">VB s: parte do benefício para o dono (%; 0% = tudo da Thopen)<input type="text" inputmode="decimal" id="a-s"></label>
-      <label>Desconto ao cliente c (% de W_I)<input type="text" inputmode="decimal" id="a-c"></label>
+      <label id="a-d-lab">Deságio nominal sobre a tarifa sem impostos (%)<input type="text" inputmode="decimal" id="a-d"></label>
+      <label id="a-p-lab" style="display:none" title="Pagamento líquido ao dono da usina por kWh compensado, já descontado o custo do Fio B">Preço ao parceiro (R$/kWh, líquido do Fio B)<input type="text" inputmode="decimal" id="a-p" placeholder="ex.: 0,45"></label>
+      <label title="Repasse do benefício fiscal (valor compensado - tarifa sem impostos) ao dono. 0% = 100% da Thopen; 50% = metade para cada um.">VB do dono: parte do benefício fiscal para o dono (%; 0% = tudo da Thopen)<input type="text" inputmode="decimal" id="a-s"></label>
+      <label>Desconto ao cliente (% do valor compensado)<input type="text" inputmode="decimal" id="a-c"></label>
     </div>
     <div class="nota-sim" id="a-modo-info"></div>
     <h3>Tarifas da distribuidora</h3>
@@ -3155,7 +3165,7 @@ a{color:var(--azul2)}
   <section class="card"><h2>Memória de cálculo (por MWh compensado)</h2><div class="tab" id="a-mem"></div><div class="nota-sim" id="a-nota"></div></section>
   <section class="card">
     <div class="barra"><h2 style="margin:0">Sensibilidade: deságio x VB</h2><span class="esp"></span>
-      <select id="a-smet"><option value="dono">Pagamento ao dono (R$/mês)</option><option value="margem">Margem líquida Thopen (R$/mês)</option><option value="dimp">Deságio sobre a tarifa sem impostos (1 - dono / U)</option><option value="dv">Deságio sobre a tarifa com impostos (1 - dono / V)</option></select></div>
+      <select id="a-smet"><option value="dono">Pagamento ao dono (R$/mês)</option><option value="margem">Margem líquida Thopen (R$/mês)</option><option value="dimp">Deságio sobre a tarifa sem impostos (1 - dono / tarifa sem impostos)</option><option value="dv">Deságio sobre a tarifa com impostos (1 - dono / tarifa com impostos)</option></select></div>
     <div class="tab" id="a-sens"></div>
     <div class="mut" id="a-sens-nota" style="margin-top:6px"></div>
   </section>
@@ -3168,11 +3178,11 @@ a{color:var(--azul2)}
     <div class="grid kpis" id="n-kpis"></div>
     <h3>Cálculo reverso</h3>
     <div class="campos">
-      <label>Variável a ajustar<select id="n-var" style="min-width:260px"><option value="d">Deságio d (mantém o VB s atual)</option><option value="s">VB s (mantém o deságio d atual)</option></select></label>
+      <label>Variável a ajustar<select id="n-var" style="min-width:260px"><option value="d">Deságio nominal (mantém o VB do dono atual)</option><option value="s">VB do dono (mantém o deságio nominal atual)</option></select></label>
       <label>Pedido do dono<input type="text" inputmode="decimal" id="n-ped"></label>
       <label>Unidade do pedido<select id="n-ped-u" style="min-width:120px"><option value="mes">R$/mês</option><option value="mwh">R$/MWh</option><option value="kwh">R$/kWh</option></select></label>
-      <label>Margem mínima da Thopen (líquida de c)<input type="text" inputmode="decimal" id="n-mmin"></label>
-      <label>Unidade da margem<select id="n-mmin-u" style="min-width:120px"><option value="pct">% de W_I</option><option value="mes">R$/mês</option><option value="mwh">R$/MWh</option></select></label>
+      <label>Margem mínima da Thopen (líquida do desconto ao cliente)<input type="text" inputmode="decimal" id="n-mmin"></label>
+      <label>Unidade da margem<select id="n-mmin-u" style="min-width:120px"><option value="pct">% do valor compensado</option><option value="mes">R$/mês</option><option value="mwh">R$/MWh</option></select></label>
     </div>
     <div class="grid dois">
       <div><b class="n-tit" id="n-ped-tit">Pedido do dono</b><div class="tab" id="n-rev-ped" style="margin-top:6px"></div></div>
@@ -3190,7 +3200,7 @@ a{color:var(--azul2)}
       <label>Degradação anual da geração (%)<input type="text" inputmode="decimal" id="n-degr"></label>
       <label>Taxa de desconto anual (%)<input type="text" inputmode="decimal" id="n-taxa"></label>
       <label>Fio B pelo escalonamento da Lei 14.300<select id="n-esc" style="min-width:200px"><option value="1">Sim (60, 75, 90 e 100%)</option><option value="0">Não (% fixo informado acima)</option></select></label>
-      <label>Manter fixo ao longo do contrato<select id="n-fixo" style="min-width:280px"><option value="d">Deságio (d do ano 1)</option><option value="p">Preço (R$/kWh, reajustado pelo índice)</option></select></label>
+      <label>Manter fixo ao longo do contrato<select id="n-fixo" style="min-width:280px"><option value="d">Deságio nominal (do ano 1)</option><option value="p">Preço (R$/kWh, reajustado pelo índice)</option></select></label>
     </div>
     <div class="grid kpis" id="n-proj-kpis"></div>
     <div class="graf" style="margin-top:12px"><canvas id="g-neg"></canvas></div>
@@ -4222,55 +4232,55 @@ a{color:var(--azul2)}
     calcUlt = {r: r, P: P};
     var gd = ["", "GD I", "GD II", "GD III"][enq];
     var kp = [
-      ["U: tarifa sem tributos", num(r.U), "D + E, R$/MWh"],
-      ["V: tarifa cheia", num(r.V), "U x k_full; ICMS " + pct2(ic) + ", PIS+COFINS " + pct2(pc)],
-      ["FB_ef: Fio B pago", num(r.fb), enq === 1 ? "GD I: não paga Fio B" : gd + ": " + num(fbS) + " x " + pct2(pfb)],
-      ["W: energia compensada", num(r.W), "com os tributos evitados (" + gd + "); ICMS TE " + sn(fte) + ", TUSD " + sn(ftu)],
-      ["Y: benefício tributário", num(r.Y), "W - (U - FB_ef)"],
-      ["X: VB", num(r.X), "s x Y, s = " + pct2(s)],
-      ["Z: COMP", num(r.Z), "(U - FB_ef) + X"],
-      ["Deságio nominal (sobre a tarifa)", pct2(des), P == null ? "informe o preço ou o deságio" : "1 - P / U; preço de venda P = " + num(P) + " R$/MWh",
-        "Deságio sobre U = TUSD + TE (tarifa sem tributos): P = (1 - d) x U. Mesma base do Arrendamento."],
-      ["Economia do cliente", num(eco), eco == null ? "" : "R$/MWh compensado (W - P); " + pct2(eco / r.V) + " da tarifa cheia",
-        "Crédito da energia compensada (W, com os tributos evitados) menos o preço P pago pela energia."],
-      ["Pagamento ao dono (opção A)", ra ? num(ra.dono) : "-", ra ? "P + s x Y_I - Fio B com impostos, R$/MWh (como no Arrendamento)" : "",
-        "Opção A do Arrendamento: (1 - d) x U + s x Y_I - FB_ef x k_full, com Y_I = W_I - U (benefício fiscal sem Fio B)."],
-      ["Deságio implícito (líquido do VB e do Fio B, sobre a tarifa sem tributos)", ra ? pct2(ra.dimp) : "-", ra ? "1 - dono / U; U = " + num(r.U) + " R$/MWh" : "",
-        "Deságio implícito = 1 - pagamento ao dono / U, com U = TUSD + TE (tarifa sem tributos). Considera o VB (s x Y soma ao dono) e o Fio B (subtrai do dono): diminui quando s aumenta e aumenta com o Fio B. Fica negativo quando o dono recebe mais que a tarifa U, o que é possível com VB alto e deságio baixo."],
-      ["Fio B residual com tributos", num(r.fbr), "FB_ef x k_full, pago à distribuidora por MWh compensado"]
+      ["Tarifa sem impostos", num(r.U), "TUSD + TE, R$/MWh"],
+      ["Tarifa com impostos", num(r.V), "tarifa sem impostos x fator de impostos; ICMS " + pct2(ic) + ", PIS+COFINS " + pct2(pc)],
+      ["Fio B efetivo (pago)", num(r.fb), enq === 1 ? "GD I: não paga Fio B" : gd + ": " + num(fbS) + " x " + pct2(pfb)],
+      ["Valor compensado", num(r.W), "com os tributos evitados (" + gd + "); ICMS TE " + sn(fte) + ", TUSD " + sn(ftu)],
+      ["Benefício fiscal", num(r.Y), "valor compensado - (tarifa sem impostos - Fio B efetivo)"],
+      ["VB", num(r.X), "VB do dono x benefício fiscal, VB do dono = " + pct2(s)],
+      ["COMP", num(r.Z), "(tarifa sem impostos - Fio B efetivo) + VB"],
+      ["Deságio nominal (sobre a tarifa sem impostos)", pct2(des), P == null ? "informe o preço ou o deságio" : "1 - preço / tarifa sem impostos; preço de venda = " + num(P) + " R$/MWh",
+        "Deságio sobre a tarifa sem impostos (TUSD + TE): preço = (1 - deságio) x tarifa sem impostos. Mesma base do Arrendamento."],
+      ["Economia do cliente", num(eco), eco == null ? "" : "R$/MWh compensado (valor compensado - preço); " + pct2(eco / r.V) + " da tarifa com impostos",
+        "Crédito da energia compensada (valor compensado, com os tributos evitados) menos o preço pago pela energia."],
+      ["Pagamento ao dono (opção A)", ra ? num(ra.dono) : "-", ra ? "preço + VB do dono x benefício fiscal sem Fio B - Fio B com impostos, R$/MWh (como no Arrendamento)" : "",
+        "Opção A do Arrendamento: (1 - deságio) x tarifa sem impostos + VB do dono x benefício fiscal sem Fio B - Fio B efetivo x fator de impostos, com benefício fiscal sem Fio B = valor compensado sem Fio B - tarifa sem impostos."],
+      ["Deságio implícito (líquido do VB e do Fio B, sobre a tarifa sem impostos)", ra ? pct2(ra.dimp) : "-", ra ? "1 - dono / tarifa sem impostos; tarifa sem impostos = " + num(r.U) + " R$/MWh" : "",
+        "Deságio implícito = 1 - pagamento ao dono / tarifa sem impostos (TUSD + TE). Considera o VB (VB do dono x benefício fiscal soma ao dono) e o Fio B (subtrai do dono): diminui quando o VB do dono aumenta e aumenta com o Fio B. Fica negativo quando o dono recebe mais que a tarifa sem impostos, o que é possível com VB alto e deságio baixo."],
+      ["Fio B residual com tributos", num(r.fbr), "Fio B efetivo x fator de impostos, pago à distribuidora por MWh compensado"]
     ];
     $("c-kpis").innerHTML = kp.map(function (k) {
       return '<div class="card kpi"' + (k[3] ? ' title="' + esc(k[3]) + '"' : "") + '><div class="rot">' + esc(k[0]) + (k[3] ? ' <span class="mut">(?)</span>' : "") + '</div><div class="val">' + esc(k[1]) + '</div><div class="sub">' + esc(k[2]) + "</div></div>"; }).join("");
     var L = [
-      ["k_PC", "1 / (1 - pc)", "1 / (1 - " + f4.format(pc) + ")", f6.format(r.kpc)],
-      ["k_full", "1 / ((1 - i) x (1 - pc))", "1 / ((1 - " + f4.format(ic) + ") x (1 - " + f4.format(pc) + "))", f6.format(r.kf)],
-      ["k_TE", fte ? "k_full (ICMS da TE entra no benefício)" : "k_PC (ICMS da TE não entra)", "", f6.format(r.kte)],
-      ["k_TUSD", ftu ? "k_full (ICMS da TUSD entra no benefício)" : "k_PC (ICMS da TUSD não entra)", "", f6.format(r.ktu)],
-      ["U (tarifa sem tributos)", "D + E", num(Dv) + " + " + num(Ev), num(r.U)],
-      ["V (tarifa cheia)", "U x k_full", num(r.U) + " x " + f6.format(r.kf), num(r.V)],
-      ["FB_ef (Fio B pago)", enq === 1 ? "GD I: 0" : "Fio B SCEE x % Lei 14.300", enq === 1 ? "" : num(fbS) + " x " + pct2(pfb), num(r.fb)],
-      ["W (energia compensada)", "(D - FB_ef) x k_TUSD + E x k_TE", "(" + num(Dv) + " - " + num(r.fb) + ") x " + f6.format(r.ktu) + " + " + num(Ev) + " x " + f6.format(r.kte), num(r.W)],
-      ["Y (benefício tributário)", "W - (U - FB_ef)", num(r.W) + " - (" + num(r.U) + " - " + num(r.fb) + ")", num(r.Y)],
-      ["X (VB)", "s x Y", pct2(s) + " x " + num(r.Y), num(r.X)],
-      ["Z (COMP)", "(U - FB_ef) + X", "(" + num(r.U) + " - " + num(r.fb) + ") + " + num(r.X), num(r.Z)],
-      ["P (preço de venda)", modo === "p" ? "informado" : "(1 - d) x U", modo === "p" ? "" : "(1 - " + pct2(pv == null ? null : pv / 100) + ") x " + num(r.U), num(P)],
-      ["Deságio nominal d (sobre a tarifa)", "1 - P / U", "1 - " + num(P) + " / " + num(r.U), pct2(des)],
-      ["Economia do cliente", "W - P", num(r.W) + " - " + num(P), num(eco)],
-      ["W_I (sem Fio B, como no Arrendamento)", "D x k_TUSD + E x k_TE", ra ? num(Dv) + " x " + f6.format(ra.ktu) + " + " + num(Ev) + " x " + f6.format(ra.kte) : "", ra ? num(ra.WI) : "-"],
-      ["Y_I (benefício fiscal sem Fio B)", "W_I - U", ra ? num(ra.WI) + " - " + num(r.U) : "", ra ? num(ra.Y) : "-"],
-      ["Custo do Fio B com impostos (dono)", "FB_ef x k_full", num(r.fb) + " x " + f6.format(r.kf), ra ? num(ra.cfb) : "-"],
-      ["Pagamento ao dono (opção A)", "(1 - d) x U + s x Y_I - custo do Fio B", ra ? "(1 - " + pct2(des) + ") x " + num(r.U) + " + " + pct2(s) + " x " + num(ra.Y) + " - " + num(ra.cfb) : "", ra ? num(ra.dono) : "-"],
-      ["Deságio implícito (líquido do VB e do Fio B)", "1 - dono / U", ra ? "1 - " + num(ra.dono) + " / " + num(r.U) : "", ra ? pct2(ra.dimp) : "-"],
-      ["Fio B residual com tributos", "FB_ef x k_full", num(r.fb) + " x " + f6.format(r.kf), num(r.fbr)]
+      ["Fator de PIS/COFINS", "1 / (1 - PIS/COFINS)", "1 / (1 - " + f4.format(pc) + ")", f6.format(r.kpc)],
+      ["Fator de impostos (ICMS e PIS/COFINS)", "1 / ((1 - ICMS) x (1 - PIS/COFINS))", "1 / ((1 - " + f4.format(ic) + ") x (1 - " + f4.format(pc) + "))", f6.format(r.kf)],
+      ["Fator de impostos da TE", fte ? "fator de impostos (ICMS da TE entra no benefício)" : "fator de PIS/COFINS (ICMS da TE não entra)", "", f6.format(r.kte)],
+      ["Fator de impostos da TUSD", ftu ? "fator de impostos (ICMS da TUSD entra no benefício)" : "fator de PIS/COFINS (ICMS da TUSD não entra)", "", f6.format(r.ktu)],
+      ["Tarifa sem impostos (TUSD + TE)", "TUSD + TE", num(Dv) + " + " + num(Ev), num(r.U)],
+      ["Tarifa com impostos", "tarifa sem impostos x fator de impostos", num(r.U) + " x " + f6.format(r.kf), num(r.V)],
+      ["Fio B efetivo (pago)", enq === 1 ? "GD I: 0" : "Fio B SCEE x % Lei 14.300", enq === 1 ? "" : num(fbS) + " x " + pct2(pfb), num(r.fb)],
+      ["Valor compensado", "(TUSD - Fio B efetivo) x fator de impostos da TUSD + TE x fator de impostos da TE", "(" + num(Dv) + " - " + num(r.fb) + ") x " + f6.format(r.ktu) + " + " + num(Ev) + " x " + f6.format(r.kte), num(r.W)],
+      ["Benefício fiscal", "valor compensado - (tarifa sem impostos - Fio B efetivo)", num(r.W) + " - (" + num(r.U) + " - " + num(r.fb) + ")", num(r.Y)],
+      ["VB", "VB do dono x benefício fiscal", pct2(s) + " x " + num(r.Y), num(r.X)],
+      ["COMP", "(tarifa sem impostos - Fio B efetivo) + VB", "(" + num(r.U) + " - " + num(r.fb) + ") + " + num(r.X), num(r.Z)],
+      ["Preço de venda", modo === "p" ? "informado" : "(1 - deságio) x tarifa sem impostos", modo === "p" ? "" : "(1 - " + pct2(pv == null ? null : pv / 100) + ") x " + num(r.U), num(P)],
+      ["Deságio nominal (sobre a tarifa sem impostos)", "1 - preço / tarifa sem impostos", "1 - " + num(P) + " / " + num(r.U), pct2(des)],
+      ["Economia do cliente", "valor compensado - preço", num(r.W) + " - " + num(P), num(eco)],
+      ["Valor compensado sem Fio B (como no Arrendamento)", "TUSD x fator de impostos da TUSD + TE x fator de impostos da TE", ra ? num(Dv) + " x " + f6.format(ra.ktu) + " + " + num(Ev) + " x " + f6.format(ra.kte) : "", ra ? num(ra.WI) : "-"],
+      ["Benefício fiscal sem Fio B", "valor compensado sem Fio B - tarifa sem impostos", ra ? num(ra.WI) + " - " + num(r.U) : "", ra ? num(ra.Y) : "-"],
+      ["Custo do Fio B com impostos (dono)", "Fio B efetivo x fator de impostos", num(r.fb) + " x " + f6.format(r.kf), ra ? num(ra.cfb) : "-"],
+      ["Pagamento ao dono (opção A)", "(1 - deságio) x tarifa sem impostos + VB do dono x benefício fiscal sem Fio B - custo do Fio B", ra ? "(1 - " + pct2(des) + ") x " + num(r.U) + " + " + pct2(s) + " x " + num(ra.Y) + " - " + num(ra.cfb) : "", ra ? num(ra.dono) : "-"],
+      ["Deságio implícito (líquido do VB e do Fio B)", "1 - dono / tarifa sem impostos", ra ? "1 - " + num(ra.dono) + " / " + num(r.U) : "", ra ? pct2(ra.dimp) : "-"],
+      ["Fio B residual com tributos", "Fio B efetivo x fator de impostos", num(r.fb) + " x " + f6.format(r.kf), num(r.fbr)]
     ];
     $("c-mem").innerHTML = tabela(["Passo", "Fórmula", "Cálculo", "Valor"], L.map(function (l) {
       return "<tr><td>" + esc(l[0]) + "</td><td>" + esc(l[1]) + "</td><td>" + esc(l[2]) + "</td>" + td("<b>" + esc(l[3]) + "</b>") + "</tr>"; }), "", "lado");
     var ano = +String($("c-data").value || D.meta.hoje).slice(0, 4), notas = ["Valores em R$/MWh. TUSD, TE e Fio B vêm da vigência atual; a data de referência só define o % da Lei 14.300."];
-    if (enq === 3) notas.push("GD III: pela Lei 14.300 (art. 27, par. 1o) paga também 40% do Fio A, TFSEE e P&D/EE, o que não está modelado; W e Z ficam superestimados.");
+    if (enq === 3) notas.push("GD III: pela Lei 14.300 (art. 27, par. 1o) paga também 40% do Fio A, TFSEE e P&D/EE, o que não está modelado; o valor compensado e o COMP ficam superestimados.");
     if (enq !== 1 && ano > 2028) notas.push("A partir de 2029 a regra é definida pela ANEEL e não está modelada; usado 100% do Fio B.");
-    if (enq !== 1 && !fbS) notas.push("Sem Fio B SCEE válido: FB_ef = 0.");
-    notas.push("Deságio sobre U = TUSD + TE (tarifa sem tributos), como no Arrendamento: P = (1 - d) x U. Deságio implícito = 1 - dono / U, com o dono pela opção A (VB s sobre Y_I e Fio B com impostos descontado); muda com s e com o Fio B e pode ficar negativo.");
-    if (ra && ra.dimp < 0) notas.push("Deságio implícito negativo: o dono recebe mais que a tarifa U.");
+    if (enq !== 1 && !fbS) notas.push("Sem Fio B SCEE válido: Fio B efetivo = 0.");
+    notas.push("Deságio sobre a tarifa sem impostos (TUSD + TE), como no Arrendamento: preço = (1 - deságio) x tarifa sem impostos. Deságio implícito = 1 - dono / tarifa sem impostos, com o dono pela opção A (VB do dono sobre o benefício fiscal sem Fio B e Fio B com impostos descontado); muda com o VB do dono e com o Fio B e pode ficar negativo.");
+    if (ra && ra.dimp < 0) notas.push("Deságio implícito negativo: o dono recebe mais que a tarifa sem impostos.");
     $("c-nota").textContent = notas.join(" ");
     calcFatura(r, P);
   }
@@ -4288,7 +4298,7 @@ a{color:var(--azul2)}
       ["Economia estimada", brl(eco), sem ? pct2(eco / sem) + " da fatura sem GD" : ""]].map(function (k, j) {
       return '<div class="card kpi' + (j === 3 && eco > 0 ? " melhor" : "") + '"><div class="rot">' + esc(k[0]) + '</div><div class="val">' + esc(k[1]) + '</div><div class="sub">' + esc(k[2]) + "</div></div>"; }).join("");
     $("c-fat-tab").innerHTML = tabela(["Item", "Sem GD", "Com GD"], [
-      ["Energia faturada (" + f0.format(fat) + " kWh x V)", eSem, eSem], ["Crédito da energia compensada (" + f0.format(Ece) + " kWh x W)", 0, -cred],
+      ["Energia faturada (" + f0.format(fat) + " kWh x tarifa com impostos)", eSem, eSem], ["Crédito da energia compensada (" + f0.format(Ece) + " kWh x valor compensado)", 0, -cred],
       ["Bandeira com tributos", bSem, bCom], ["CIP", cip, cip], ["<b>Total da fatura</b>", sem, dist],
       ["Pagamento ao gerador", 0, ger], ["<b>Custo total</b>", sem, tot]].map(function (l) {
       return "<tr><td>" + l[0] + "</td>" + td(brl(l[1])) + td(brl(l[2])) + "</tr>"; }), "", "lado");
@@ -4374,7 +4384,7 @@ a{color:var(--azul2)}
       ["Vigência atual B3", m ? dataBr(m.ini) + " a " + dataBr(m.fim) + " (" + m.reh + ")" : "sem tarifa B3"],
       ["Fio B SCEE", m && m.fbi ? "vigência desde " + dataBr(m.fbi) + " (" + m.fbr + ")" + (m.sus ? ", valor suspeito" : "") : "sem Fio B SCEE"]]
       .filter(function (x) { return x[1]; }).map(function (x) { return "<span>" + esc(x[0]) + ": <b>" + esc(x[1]) + "</b></span>"; }).join("");
-    $("a-fontes").innerHTML = (m && m.tx ? "<b>Fontes dos padrões.</b> ICMS: " + esc(t.fi) + ". PIS/COFINS: " + esc(t.fp) + ". Flags de ICMS e VB s: " + esc(t.ff) + (t.ob ? " (" + esc(t.ob) + ")" : "") + ". "
+    $("a-fontes").innerHTML = (m && m.tx ? "<b>Fontes dos padrões.</b> ICMS: " + esc(t.fi) + ". PIS/COFINS: " + esc(t.fp) + ". Flags de ICMS e VB do dono: " + esc(t.ff) + (t.ob ? " (" + esc(t.ob) + ")" : "") + ". "
       : "Distribuidora sem tarifa B3 no painel: informe TUSD, TE e alíquotas à mão. ") +
       "Produtividade UFV" + (pr.uf ? " (" + esc(pr.uf) + ")" : "") + ": " + f0.format(pr.v) + " kWh/kWp/ano (" + f1.format(pr.v / 12) + " kWh/kWp/mês), " + esc(pr.f) +
       ". Todos os campos são editáveis; use Restaurar padrões para voltar.";
@@ -4392,26 +4402,26 @@ a{color:var(--azul2)}
     var fora = x.d < -1e-9 || x.d > 1 + 1e-9, mp = x.modo === "p";
     $("a-modo-info").className = "nota-sim" + (mp && fora ? " alerta" : "");
     $("a-modo-info").textContent = mp
-      ? "Deságio nominal equivalente: " + pct2(x.d) + " (d = 1 - (1.000 x P + custo do Fio B - s x Y) / U = 1 - (" + f2.format(1000 * x.P) + " + " + f2.format(r.cfb) + " - " + pct2(x.s) + " x " + f2.format(r.Y) + ") / " + f2.format(r.U) + ", com o VB s fixo)." +
+      ? "Deságio nominal equivalente: " + pct2(x.d) + " (1 - (1.000 x preço ao parceiro + custo do Fio B - VB do dono x benefício fiscal) / tarifa sem impostos = 1 - (" + f2.format(1000 * x.P) + " + " + f2.format(r.cfb) + " - " + pct2(x.s) + " x " + f2.format(r.Y) + ") / " + f2.format(r.U) + ", com o VB do dono fixo)." +
         (fora ? " Atenção: fora de 0 a 100%; o cálculo continua, mas " + (x.d < 0 ? "o preço supera o que o deságio zero paga ao dono." : "o preço exige deságio acima de 100%.") : "")
       : "Preço resultante ao parceiro: R$ " + f4.format(r.pk) + "/kWh (R$ " + f2.format(r.dono) + "/MWh compensado), líquido do Fio B. Deságio sobre a tarifa sem impostos " + pct2(r.dimp) + "; com impostos " + pct2(r.dV) + ".";
     arrTarifas(x, r);
     // Linha 1: preço ao parceiro e os deságios sobre U, V e W_I lado a lado. Linha 2: valores em R$.
     var kp1 = [
       ["Preço pago ao parceiro (dono da usina)", "R$ " + f4.format(r.pk) + "/kWh", num(r.dono) + " R$/MWh, líquido do Fio B" + (mp ? " (informado)" : " (resultante do deságio)"), r.pk < 0],
-      ["Deságio sobre a tarifa sem impostos (TUSD + TE)", pct2(r.dimp), "U = " + num(r.U) + " R$/MWh; 1 - " + num(r.dono) + " / " + num(r.U) + " (" + gd + ")", false,
-        "Deságio implícito = 1 - pagamento ao dono / U, com U = TUSD + TE (tarifa sem tributos). Considera o VB (s x Y soma ao dono) e o Fio B (subtrai do dono): diminui quando s aumenta e aumenta com o Fio B. Fica negativo quando o dono recebe mais que a tarifa U, o que é possível com VB alto e deságio baixo."],
-      ["Deságio sobre a tarifa com impostos (ICMS, PIS e COFINS)", pct2(r.dV), "V = " + num(r.V) + " R$/MWh; 1 - " + num(r.dono) + " / " + num(r.V), false,
-        "V = U x k_full (tarifa cheia com ICMS e PIS/COFINS)."],
-      ["Deságio sobre o valor compensado na conta do cliente", pct2(r.dWI), "W_I = " + num(r.WI) + " R$/MWh (tarifa com os tributos evitados); 1 - " + num(r.dono) + " / " + num(r.WI), false,
-        "W_I = D x k_TUSD + E x k_TE: valor que o crédito compensa na conta do cliente, com os tributos evitados (total a dividir entre dono e Thopen)."]
+      ["Deságio sobre a tarifa sem impostos (TUSD + TE)", pct2(r.dimp), "tarifa sem impostos = " + num(r.U) + " R$/MWh; 1 - " + num(r.dono) + " / " + num(r.U) + " (" + gd + ")", false,
+        "Deságio implícito = 1 - pagamento ao dono / tarifa sem impostos (TUSD + TE). Considera o VB (VB do dono x benefício fiscal soma ao dono) e o Fio B (subtrai do dono): diminui quando o VB do dono aumenta e aumenta com o Fio B. Fica negativo quando o dono recebe mais que a tarifa sem impostos, o que é possível com VB alto e deságio baixo."],
+      ["Deságio sobre a tarifa com impostos (ICMS, PIS e COFINS)", pct2(r.dV), "tarifa com impostos = " + num(r.V) + " R$/MWh; 1 - " + num(r.dono) + " / " + num(r.V), false,
+        "Tarifa com impostos = tarifa sem impostos x fator de impostos (ICMS e PIS/COFINS)."],
+      ["Deságio sobre o valor compensado na conta do cliente", pct2(r.dWI), "valor compensado = " + num(r.WI) + " R$/MWh (com os tributos evitados); 1 - " + num(r.dono) + " / " + num(r.WI), false,
+        "Valor compensado = TUSD x fator de impostos da TUSD + TE x fator de impostos da TE: valor que o crédito compensa na conta do cliente, com os tributos evitados (total a dividir entre dono e Thopen)."]
     ];
     var kp2 = [
       ["Pagamento ao dono", brl(r.dono * q) + "/mês", num(r.dono) + " R$/MWh; " + brl(r.dono * q * 12) + "/ano", r.dono < 0],
       ["Parte da Thopen", brl(r.th * q) + "/mês", num(r.th) + " R$/MWh; " + brl(r.th * q * 12) + "/ano; fica com " + pct2(1 - x.s) + " do VB", false],
-      ["Margem líquida da Thopen", brl(r.mg * q) + "/mês", num(r.mg) + " R$/MWh, após desconto ao cliente de " + pct2(x.c) + " de W_I", r.mg < 0],
-      [mp ? "Deságio nominal equivalente (d)" : "Deságio nominal (d)", pct2(x.d), (mp ? "equivalente ao preço de R$ " + f4.format(x.P) + "/kWh; " : "parâmetro d, ") + "só sobre U; VB do dono " + pct2(x.s) + (mp && fora ? "; fora de 0 a 100%" : ""), mp && fora,
-        "Deságio negociado d, aplicado só sobre U = TUSD + TE (tarifa sem tributos): o dono recebe (1 - d) x U, mais s x Y, menos o Fio B. No modo preço, d é o deságio que entrega o preço informado com o VB s atual. Com VB 0% e sem Fio B, d = deságio sobre U."]
+      ["Margem líquida da Thopen", brl(r.mg * q) + "/mês", num(r.mg) + " R$/MWh, após desconto ao cliente de " + pct2(x.c) + " do valor compensado", r.mg < 0],
+      [mp ? "Deságio nominal equivalente" : "Deságio nominal", pct2(x.d), (mp ? "equivalente ao preço de R$ " + f4.format(x.P) + "/kWh; " : "parâmetro, ") + "só sobre a tarifa sem impostos; VB do dono " + pct2(x.s) + (mp && fora ? "; fora de 0 a 100%" : ""), mp && fora,
+        "Deságio nominal negociado, aplicado só sobre a tarifa sem impostos (TUSD + TE): o dono recebe (1 - deságio) x tarifa sem impostos, mais VB do dono x benefício fiscal, menos o Fio B. No modo preço, é o deságio que entrega o preço informado com o VB do dono atual. Com VB 0% e sem Fio B, deságio nominal = deságio sobre a tarifa sem impostos."]
     ];
     var card = function (k) {
       return '<div class="card kpi' + (k[3] ? " negativo" : "") + '"' + (k[4] ? ' title="' + esc(k[4]) + '"' : "") + '><div class="rot">' + esc(k[0]) + (k[4] ? ' <span class="mut">(?)</span>' : "") + '</div><div class="val">' + esc(k[1]) + '</div><div class="sub">' + esc(k[2]) + "</div></div>"; };
@@ -4420,7 +4430,7 @@ a{color:var(--azul2)}
     var R = [
       ["Geração média", null, f3(G.ger) + " MWh", f3(G.ger * 12) + " MWh", false],
       ["Energia compensada (" + pct2(G.pc) + " da geração)", null, f3(q) + " MWh", f3(q * 12) + " MWh", false],
-      ["W_I: valor ao cliente com tributos evitados", r.WI, brl(r.WI * q), brl(r.WI * q * 12), false],
+      ["Valor compensado na conta do cliente (com tributos evitados)", r.WI, brl(r.WI * q), brl(r.WI * q * 12), false],
       ["Pagamento ao dono", r.dono, brl(r.dono * q), brl(r.dono * q * 12), r.dono < 0],
       ["Parte da Thopen", r.th, brl(r.th * q), brl(r.th * q * 12), false],
       ["Custo do Fio B (pago pelo dono, " + (x.fbCom ? "com" : "sem") + " impostos)", r.cfb, brl(r.cfb * q), brl(r.cfb * q * 12), false],
@@ -4431,28 +4441,28 @@ a{color:var(--azul2)}
       var c = l[4] ? "negativo" : "";
       return "<tr><td>" + esc(l[0]) + "</td>" + td(l[1] == null ? "-" : num(l[1]), c) + td(esc(l[2]), c) + td(esc(l[3]), c) + "</tr>"; }), "", "lado");
     var L = [
-      ["k_PC", "1 / (1 - pc)", "1 / (1 - " + f4.format(x.pc) + ")", f6.format(r.kpc)],
-      ["k_full", "1 / ((1 - i) x (1 - pc))", "1 / ((1 - " + f4.format(x.ic) + ") x (1 - " + f4.format(x.pc) + "))", f6.format(r.kf)],
-      ["k_TE", x.fte ? "k_full (ICMS da TE entra)" : "k_PC (ICMS da TE não entra)", "", f6.format(r.kte)],
-      ["k_TUSD", x.ftu ? "k_full (ICMS da TUSD entra)" : "k_PC (ICMS da TUSD não entra)", "", f6.format(r.ktu)],
-      ["U (tarifa sem tributos)", "D + E", num(x.Dv) + " + " + num(x.Ev), num(r.U)],
-      ["W_I (valor com tributos evitados, sem Fio B)", "D x k_TUSD + E x k_TE", num(x.Dv) + " x " + f6.format(r.ktu) + " + " + num(x.Ev) + " x " + f6.format(r.kte), num(r.WI)],
-      ["Y (benefício fiscal)", "W_I - U", num(r.WI) + " - " + num(r.U), num(r.Y)],
-      ["FB_ef (Fio B efetivo)", x.enq === 1 ? "GD I: 0" : "Fio B SCEE x % Lei 14.300", x.enq === 1 ? "" : num(x.fbS) + " x " + pct2(x.pfb), num(r.fb)],
-      ["Custo do Fio B com impostos" + (x.fbCom ? " (usado)" : ""), "FB_ef x k_full", num(r.fb) + " x " + f6.format(r.kf), num(r.cfbC)],
-      ["Custo do Fio B sem impostos" + (x.fbCom ? "" : " (usado)"), "FB_ef", "", num(r.cfbS)],
-      ["Pagamento ao dono", "(1 - d) x U + s x Y - custo do Fio B", "(1 - " + pct2(x.d) + ") x " + num(r.U) + " + " + pct2(x.s) + " x " + num(r.Y) + " - " + num(r.cfb), num(r.dono)],
-      ["Parte da Thopen", "d x U + (1 - s) x Y", pct2(x.d) + " x " + num(r.U) + " + (1 - " + pct2(x.s) + ") x " + num(r.Y), num(r.th)],
-      ["Conferência", "dono + Thopen + custo do Fio B = W_I", num(r.dono) + " + " + num(r.th) + " + " + num(r.cfb), num(r.dono + r.th + r.cfb)],
-      ["Desconto ao cliente", "c x W_I", pct2(x.c) + " x " + num(r.WI), num(r.desc)],
+      ["Fator de PIS/COFINS", "1 / (1 - PIS/COFINS)", "1 / (1 - " + f4.format(x.pc) + ")", f6.format(r.kpc)],
+      ["Fator de impostos (ICMS e PIS/COFINS)", "1 / ((1 - ICMS) x (1 - PIS/COFINS))", "1 / ((1 - " + f4.format(x.ic) + ") x (1 - " + f4.format(x.pc) + "))", f6.format(r.kf)],
+      ["Fator de impostos da TE", x.fte ? "fator de impostos (ICMS da TE entra)" : "fator de PIS/COFINS (ICMS da TE não entra)", "", f6.format(r.kte)],
+      ["Fator de impostos da TUSD", x.ftu ? "fator de impostos (ICMS da TUSD entra)" : "fator de PIS/COFINS (ICMS da TUSD não entra)", "", f6.format(r.ktu)],
+      ["Tarifa sem impostos (TUSD + TE)", "TUSD + TE", num(x.Dv) + " + " + num(x.Ev), num(r.U)],
+      ["Valor compensado (com tributos evitados, sem Fio B)", "TUSD x fator de impostos da TUSD + TE x fator de impostos da TE", num(x.Dv) + " x " + f6.format(r.ktu) + " + " + num(x.Ev) + " x " + f6.format(r.kte), num(r.WI)],
+      ["Benefício fiscal", "valor compensado - tarifa sem impostos", num(r.WI) + " - " + num(r.U), num(r.Y)],
+      ["Fio B efetivo", x.enq === 1 ? "GD I: 0" : "Fio B SCEE x % Lei 14.300", x.enq === 1 ? "" : num(x.fbS) + " x " + pct2(x.pfb), num(r.fb)],
+      ["Custo do Fio B com impostos" + (x.fbCom ? " (usado)" : ""), "Fio B efetivo x fator de impostos", num(r.fb) + " x " + f6.format(r.kf), num(r.cfbC)],
+      ["Custo do Fio B sem impostos" + (x.fbCom ? "" : " (usado)"), "Fio B efetivo", "", num(r.cfbS)],
+      ["Pagamento ao dono", "(1 - deságio nominal) x tarifa sem impostos + VB do dono x benefício fiscal - custo do Fio B", "(1 - " + pct2(x.d) + ") x " + num(r.U) + " + " + pct2(x.s) + " x " + num(r.Y) + " - " + num(r.cfb), num(r.dono)],
+      ["Parte da Thopen", "deságio nominal x tarifa sem impostos + (1 - VB do dono) x benefício fiscal", pct2(x.d) + " x " + num(r.U) + " + (1 - " + pct2(x.s) + ") x " + num(r.Y), num(r.th)],
+      ["Conferência", "dono + Thopen + custo do Fio B = valor compensado", num(r.dono) + " + " + num(r.th) + " + " + num(r.cfb), num(r.dono + r.th + r.cfb)],
+      ["Desconto ao cliente", "desconto ao cliente (%) x valor compensado", pct2(x.c) + " x " + num(r.WI), num(r.desc)],
       ["Margem líquida da Thopen", "Thopen - desconto", num(r.th) + " - " + num(r.desc), num(r.mg)],
-      ["V (tarifa com impostos)", "U x k_full", num(r.U) + " x " + f6.format(r.kf), num(r.V)],
-      mp ? ["Deságio nominal d equivalente ao preço", "1 - (1.000 x P + custo do Fio B - s x Y) / U", "1 - (" + num(1000 * x.P) + " + " + num(r.cfb) + " - " + pct2(x.s) + " x " + num(r.Y) + ") / " + num(r.U), pct2(x.d)]
-        : ["Deságio nominal d (sobre a tarifa)", "parâmetro", "", pct2(x.d)],
+      ["Tarifa com impostos", "tarifa sem impostos x fator de impostos", num(r.U) + " x " + f6.format(r.kf), num(r.V)],
+      mp ? ["Deságio nominal equivalente ao preço", "1 - (1.000 x preço ao parceiro + custo do Fio B - VB do dono x benefício fiscal) / tarifa sem impostos", "1 - (" + num(1000 * x.P) + " + " + num(r.cfb) + " - " + pct2(x.s) + " x " + num(r.Y) + ") / " + num(r.U), pct2(x.d)]
+        : ["Deságio nominal (sobre a tarifa sem impostos)", "parâmetro", "", pct2(x.d)],
       ["Preço ao parceiro (R$/kWh)", "dono / 1.000", num(r.dono) + " / 1.000", f4.format(r.pk)],
-      ["Deságio sobre a tarifa sem impostos (implícito)", "1 - dono / U", "1 - " + num(r.dono) + " / " + num(r.U), pct2(r.dimp)],
-      ["Deságio sobre a tarifa com impostos", "1 - dono / V", "1 - " + num(r.dono) + " / " + num(r.V), pct2(r.dV)],
-      ["Deságio sobre o valor compensado (referência)", "1 - dono / W_I", "1 - " + num(r.dono) + " / " + num(r.WI), pct2(r.dWI)],
+      ["Deságio sobre a tarifa sem impostos (implícito)", "1 - dono / tarifa sem impostos", "1 - " + num(r.dono) + " / " + num(r.U), pct2(r.dimp)],
+      ["Deságio sobre a tarifa com impostos", "1 - dono / tarifa com impostos", "1 - " + num(r.dono) + " / " + num(r.V), pct2(r.dV)],
+      ["Deságio sobre o valor compensado (referência)", "1 - dono / valor compensado", "1 - " + num(r.dono) + " / " + num(r.WI), pct2(r.dWI)],
       ["Geração média (MWh/mês)", G.tp === "ufv" ? "kWp x kWh/kWp/ano / 12 x (1 - perdas)" : (G.tp === "cgh" ? "kW x FC x " + f0.format(AR.horas) + " h" : "informada"), G.calc, f3(G.ger)],
       ["Energia compensada (MWh/mês)", "geração x % compensada", f3(G.ger) + " x " + pct2(G.pc), f3(q)]
     ];
@@ -4461,10 +4471,10 @@ a{color:var(--azul2)}
     var ano = +String($("a-data").value || D.meta.hoje).slice(0, 4), notas = ["Valores por MWh compensado. TUSD, TE e Fio B vêm da vigência atual; a data de referência só define o % da Lei 14.300."];
     if (x.enq === 3) notas.push("GD III: pela Lei 14.300 a usina paga 100% do Fio B, 40% do Fio A, TFSEE e P&D/EE; aqui só o % do Fio B informado.");
     if (x.enq !== 1 && ano > 2028) notas.push("A partir de 2029 a regra é definida pela ANEEL e não está modelada; usado 100% do Fio B.");
-    if (x.enq !== 1 && !x.fbS) notas.push("Sem Fio B SCEE válido: FB_ef = 0.");
+    if (x.enq !== 1 && !x.fbS) notas.push("Sem Fio B SCEE válido: Fio B efetivo = 0.");
     if (r.mg < 0) notas.push("Margem líquida negativa: o desconto ao cliente supera a parte da Thopen.");
-    if (r.dimp < 0) notas.push("Deságio implícito negativo: o dono recebe mais que a tarifa sem tributos U (VB alto e deságio baixo).");
-    if (mp) notas.push("Modo preço: o deságio nominal d é calculado a partir do preço ao parceiro (líquido do Fio B) com o VB s fixo; todas as saídas usam esse d.");
+    if (r.dimp < 0) notas.push("Deságio implícito negativo: o dono recebe mais que a tarifa sem impostos (VB alto e deságio baixo).");
+    if (mp) notas.push("Modo preço: o deságio nominal é calculado a partir do preço ao parceiro (líquido do Fio B) com o VB do dono fixo; todas as saídas usam esse deságio.");
     $("a-nota").textContent = notas.join(" ");
     arrSens();
     negRender();
@@ -4473,19 +4483,19 @@ a{color:var(--azul2)}
   function arrTarifas(x, r) {
     var m = M[arrDist] || {}, t = m.tx || {}, f4k = function (v) { return v == null || !isFinite(v) ? "-" : f4.format(v / 1000); };
     var L = [
-      ["TUSD (D)", x.Dv, ""], ["TE (E)", x.Ev, ""],
-      ["U: tarifa sem impostos", r.U, "D + E"], ["V: tarifa com impostos", r.V, "U x k_full"],
-      ["W_I: valor compensado com tributos evitados", r.WI, "D x k_TUSD + E x k_TE"], ["Y: benefício fiscal", r.Y, "W_I - U"],
+      ["TUSD", x.Dv, ""], ["TE", x.Ev, ""],
+      ["Tarifa sem impostos", r.U, "TUSD + TE"], ["Tarifa com impostos", r.V, "tarifa sem impostos x fator de impostos"],
+      ["Valor compensado (com tributos evitados)", r.WI, "TUSD x fator de impostos da TUSD + TE x fator de impostos da TE"], ["Benefício fiscal", r.Y, "valor compensado - tarifa sem impostos"],
       ["Fio B SCEE", x.fbS, m.fbi ? "vigência desde " + dataBr(m.fbi) : ""],
       ["Fio B efetivo (x " + pct2(x.enq === 1 ? 0 : x.pfb) + " do ano)", r.fb, x.enq === 1 ? "GD I: 0" : "Fio B SCEE x % Lei 14.300"],
-      ["Custo do Fio B com impostos", r.cfbC, "FB_ef x k_full" + (x.fbCom ? ", usado" : ", não usado")],
+      ["Custo do Fio B com impostos", r.cfbC, "Fio B efetivo x fator de impostos" + (x.fbCom ? ", usado" : ", não usado")],
       ["Preço ao parceiro (dono)", r.dono, "líquido do Fio B" + (x.modo === "p" ? ", informado" : "")]
     ];
     var h = L.map(function (l) { return "<tr><td>" + esc(l[0]) + (l[2] ? ' <span class="mut">(' + esc(l[2]) + ")</span>" : "") + "</td>" + td(f4k(l[1]), l[1] < 0 ? "negativo" : "") + td(num(l[1])) + "</tr>"; });
     var tx = function (a, v, fonte) { return "<tr><td>" + esc(a) + (fonte ? ' <span class="mut">(' + esc(fonte) + ")</span>" : "") + '</td><td class="n" colspan="2">' + esc(pct2(v)) + "</td></tr>"; };
     h.push(tx("ICMS", x.ic, t.fi)); h.push(tx("PIS + COFINS", x.pc, t.fp));
-    h.push(tx("Deságio sobre a tarifa sem impostos (1 - dono / U)", r.dimp)); h.push(tx("Deságio sobre a tarifa com impostos (1 - dono / V)", r.dV));
-    h.push(tx("Deságio sobre o valor compensado (1 - dono / W_I, referência)", r.dWI));
+    h.push(tx("Deságio sobre a tarifa sem impostos (1 - dono / tarifa sem impostos)", r.dimp)); h.push(tx("Deságio sobre a tarifa com impostos (1 - dono / tarifa com impostos)", r.dV));
+    h.push(tx("Deságio sobre o valor compensado (1 - dono / valor compensado, referência)", r.dWI));
     $("a-tar").innerHTML = tabela(["Item", "R$/kWh", "R$/MWh"], h, "", "lado");
     $("a-tar-nota").textContent = (m.ini ? "Vigência B3: " + dataBr(m.ini) + " a " + dataBr(m.fim) + (m.reh ? " (" + m.reh + ")" : "") + ". " : "Sem vigência B3 no painel. ") +
       ["", "GD I", "GD II", "GD III"][x.enq] + ", referência " + dataBr($("a-data").value || D.meta.hoje) + ". Valores dos campos acima (editáveis); fontes das alíquotas: padrões do painel.";
@@ -4500,25 +4510,25 @@ a{color:var(--azul2)}
     var achou = false, perto = function (a, b) { return Math.abs(a - b) < 1e-9; };
     function corDe(v) { if (mx <= mn) return "#EAF0FA"; var k = (v - mn) / (mx - mn);
       var a = [234, 240, 250], b = [47, 85, 151]; return "rgb(" + a.map(function (c, j) { return Math.round(c + (b[j] - c) * k); }).join(",") + ")"; }
-    var h = "<table class=\"sens\"><thead><tr><th>Deságio d \\ VB s</th>" + AR.grade_s.map(function (s) { return "<th>" + pct2(s) + "</th>"; }).join("") + "</tr></thead><tbody>";
+    var h = "<table class=\"sens\"><thead><tr><th>Deságio nominal \\ VB do dono</th>" + AR.grade_s.map(function (s) { return "<th>" + pct2(s) + "</th>"; }).join("") + "</tr></thead><tbody>";
     AR.grade_d.forEach(function (d, a) {
       h += '<tr><th class="lin">' + pct2(d) + "</th>" + AR.grade_s.map(function (s, b) {
         var v = vals[a][b], at = perto(d, x.d) && perto(s, x.s); if (at) achou = true;
         var pcm = met === "dimp" || met === "dv", k = mx > mn ? (v - mn) / (mx - mn) : 0, txt = pcm ? pct2(v) : brl(v);
         var neg = v < 0 && !pcm;  // implicito negativo e normal (dono recebe mais que U)  // negativo: fundo vermelho claro, texto vermelho (legivel em qualquer tom)
         var st = neg ? "background:#FDECEA;color:#C0392B;font-weight:600" : "background:" + corDe(v) + ";color:" + (k > 0.55 ? "#fff" : "#1E2533");
-        return '<td class="n' + (at ? " atual" : "") + '" style="' + st + '" title="d ' + pct2(d) + ", s " + pct2(s) + '">' + esc(txt) + "</td>"; }).join("") + "</tr>"; });
+        return '<td class="n' + (at ? " atual" : "") + '" style="' + st + '" title="deságio ' + pct2(d) + ", VB do dono " + pct2(s) + '">' + esc(txt) + "</td>"; }).join("") + "</tr>"; });
     $("a-sens").innerHTML = h + "</tbody></table>";
-    $("a-sens-nota").textContent = (met === "dimp" ? "Deságio implícito do dono (1 - dono / U, U = R$ " + f2.format(arrUlt.r.U) + "/MWh): com d fixo, cai quando o VB s sobe. " :
-      (met === "dv" ? "Deságio sobre a tarifa com impostos (1 - dono / V, V = R$ " + f2.format(arrUlt.r.V) + "/MWh). " : "R$/mês com " + f2.format(q) + " MWh/mês compensados. ")) +
+    $("a-sens-nota").textContent = (met === "dimp" ? "Deságio implícito do dono (1 - dono / tarifa sem impostos, tarifa sem impostos = R$ " + f2.format(arrUlt.r.U) + "/MWh): com o deságio nominal fixo, cai quando o VB do dono sobe. " :
+      (met === "dv" ? "Deságio sobre a tarifa com impostos (1 - dono / tarifa com impostos, tarifa com impostos = R$ " + f2.format(arrUlt.r.V) + "/MWh). " : "R$/mês com " + f2.format(q) + " MWh/mês compensados. ")) +
       "Demais entradas como acima (enquadramento, Fio B, desconto ao cliente " + pct2(x.c) + "). Cor mais escura = maior valor. " +
-      (achou ? "Contorno: combinação atual." : "A combinação atual (d " + pct2(x.d) + ", s " + pct2(x.s) + ") não está na grade.");
+      (achou ? "Contorno: combinação atual." : "A combinação atual (deságio " + pct2(x.d) + ", VB do dono " + pct2(x.s) + ") não está na grade.");
   }
   function arrResumo() {
     if (!arrUlt) return "";
     var r = arrUlt.r, x = arrUlt.x, G = arrUlt.G, q = G.comp, i = I[arrDist] || {};
     var nome = $("a-usina").value.trim(), tp = G.tp;
-    var usina = tp === "ufv" ? "UFV de " + f2.format((lerN("a-kwp") || 0) / 1000) + " MWp" : (tp === "cgh" ? "CGH/usina de " + f2.format((lerN("a-kw") || 0) / 1000) + " MW (FC " + pct2((lerN("a-fc") || 0) / 100) + ")" : "Usina com geração informada");
+    var usina = tp === "ufv" ? "UFV de " + f2.format((lerN("a-kwp") || 0) / 1000) + " MWp" : (tp === "cgh" ? "CGH/usina de " + f2.format((lerN("a-kw") || 0) / 1000) + " MW (FC " + pct2((lerN("a-fc") || 0) / 100) + ")" : "geração média de " + f2.format(G.ger) + " MWh/mês");
     var gd = ["", "GD I", "GD II", "GD III"][x.enq];
     return [
       "Usina: " + (nome ? nome + ", " : "") + usina,
@@ -4527,7 +4537,7 @@ a{color:var(--azul2)}
       (x.modo === "p" ? "Preço ao parceiro: R$ " + f4.format(x.P) + "/kWh (deságio nominal equivalente " + pct2(x.d) + ")" : "Deságio nominal sobre a tarifa: " + pct2(x.d)) + "; VB (parte do benefício fiscal para o dono): " + pct2(x.s),
       "Valor ao dono: R$ " + f4.format(r.pk) + "/kWh, R$ " + f2.format(r.dono) + "/MWh compensado (Fio B de R$ " + f2.format(r.cfb) + "/MWh já descontado, " + (x.fbCom ? "com" : "sem") + " impostos)",
       "Pagamento estimado ao dono: R$ " + f2.format(r.dono * q) + "/mês (R$ " + f2.format(r.dono * q * 12) + "/ano)",
-      "Deságio sobre a tarifa sem impostos (U = R$ " + f4.format(r.U / 1000) + "/kWh): " + pct2(r.dimp) + "; sobre a tarifa com impostos (V = R$ " + f4.format(r.V / 1000) + "/kWh): " + pct2(r.dV) + "; sobre o valor compensado (W_I = R$ " + f4.format(r.WI / 1000) + "/kWh): " + pct2(r.dWI),
+      "Deságio sobre a tarifa sem impostos (R$ " + f4.format(r.U / 1000) + "/kWh): " + pct2(r.dimp) + "; sobre a tarifa com impostos (R$ " + f4.format(r.V / 1000) + "/kWh): " + pct2(r.dV) + "; sobre o valor compensado (R$ " + f4.format(r.WI / 1000) + "/kWh): " + pct2(r.dWI),
       "Estimativa sem bandeiras, CIP e custo de disponibilidade; tarifas ANEEL vigentes e tributos médios das faturas."
     ].join("\n");
   }
@@ -4565,9 +4575,9 @@ a{color:var(--azul2)}
     negFaixaEd = {};
   }
   function negMontaFaixa() {
-    var L = [["d", "Deságio nominal d (%)"], ["s", "VB s (%)"], ["pk", "Preço ao parceiro (R$/kWh)"], ["dmwh", "Dono (R$/MWh)"], ["dmes", "Dono (R$/mês)"],
-      ["dimp", "Deságio sobre a tarifa sem impostos (1 - dono / U)"], ["dv", "Deságio sobre a tarifa com impostos (1 - dono / V)"], ["dwi", "Deságio sobre W_I (1 - dono / W_I, referência)"],
-      ["mmes", "Margem líquida Thopen (R$/mês)"], ["mpct", "Margem líquida Thopen (% de W_I)"], ["sit", "Situação"]];
+    var L = [["d", "Deságio nominal (%)"], ["s", "VB do dono (%)"], ["pk", "Preço ao parceiro (R$/kWh)"], ["dmwh", "Dono (R$/MWh)"], ["dmes", "Dono (R$/mês)"],
+      ["dimp", "Deságio sobre a tarifa sem impostos (1 - dono / tarifa sem impostos)"], ["dv", "Deságio sobre a tarifa com impostos (1 - dono / tarifa com impostos)"], ["dwi", "Deságio sobre o valor compensado (1 - dono / valor compensado, referência)"],
+      ["mmes", "Margem líquida Thopen (R$/mês)"], ["mpct", "Margem líquida Thopen (% do valor compensado)"], ["sit", "Situação"]];
     var h = '<table class="faixa lado"><thead><tr><th>Item</th>' + NFX.map(function (c) { return '<th id="n-fh-' + c[0] + '">' + c[1] + "</th>"; }).join("") + "</tr></thead><tbody>";
     L.forEach(function (l) {
       h += "<tr><td>" + esc(l[1]) + "</td>" + NFX.map(function (c) {
@@ -4582,15 +4592,15 @@ a{color:var(--azul2)}
     var u = r.U, w = r.WI, y = r.Y, cfb = r.cfb, c = x.c, d = x.d, s = x.s, o = {ok: false, motivo: "", v: null, dmax: null, vr: vr};
     if (mg != null) o.dmax = w - cfb - c * w - mg;
     if (vr === "d") {
-      if (!u) { o.motivo = "U = 0: o deságio não altera o resultado"; return o; }
+      if (!u) { o.motivo = "Tarifa sem impostos = 0: o deságio não altera o resultado"; return o; }
       d = dono != null ? 1 - (dono + cfb - s * y) / u : (mg + c * w - (1 - s) * y) / u; o.v = d;
     } else {
-      if (Math.abs(y) < 1e-12) { o.motivo = "Y = 0: sem benefício fiscal, o VB não altera o resultado"; return o; }
+      if (Math.abs(y) < 1e-12) { o.motivo = "Benefício fiscal = 0: o VB não altera o resultado"; return o; }
       s = dono != null ? (dono + cfb - (1 - d) * u) / y : 1 - (mg + c * w - d * u) / y; o.v = s;
     }
     var dn = (1 - d) * u + s * y - cfb, th = d * u + (1 - s) * y;
     o.d = d; o.s = s; o.dono = dn; o.th = th; o.mg = th - c * w; o.dimp = u ? 1 - dn / u : null;
-    if (o.v < -1e-12 || o.v > 1 + 1e-12) o.motivo = (vr === "d" ? "deságio d" : "VB s") + " fora de 0 a 100%"; else o.ok = true;
+    if (o.v < -1e-12 || o.v > 1 + 1e-12) o.motivo = (vr === "d" ? "deságio nominal" : "VB do dono") + " fora de 0 a 100%"; else o.ok = true;
     return o;
   }
   // Projecao ano a ano: D, E e Fio B x (1 + reajuste)^t; % do Fio B pela Lei 14.300 (2029+ 100%) ou fixo; GD I = 0
@@ -4635,19 +4645,19 @@ a{color:var(--azul2)}
     var kp = [
       ["Recebimento do dono", mes(r.dono), "R$ " + f2.format(r.dono) + "/MWh; " + brl(r.dono * q * 12) + "/ano", r.dono < 0],
       ["Preço ao parceiro", "R$ " + f4.format(r.pk) + "/kWh", "líquido do Fio B" + (x.modo === "p" ? " (informado)" : ""), r.pk < 0],
-      ["% do valor total (dono / W_I)", pct2(r.WI ? r.dono / r.WI : null), "W_I = R$ " + f2.format(r.WI) + "/MWh (valor ao cliente com tributos evitados); deságio sobre W_I " + pct2(r.dWI), false],
-      ["% da tarifa sem tributos (dono / U)", pct2(r.U ? r.dono / r.U : null), "U = TUSD + TE = R$ " + f2.format(r.U) + "/MWh", false],
-      ["Deságio sobre a tarifa sem / com impostos", pct2(r.dimp) + " / " + pct2(r.dV), "1 - dono / U e 1 - dono / V (V = R$ " + f2.format(r.V) + "/MWh); nominal d " + pct2(x.d), false],
+      ["% do valor compensado (dono / valor compensado)", pct2(r.WI ? r.dono / r.WI : null), "valor compensado = R$ " + f2.format(r.WI) + "/MWh (com tributos evitados); deságio sobre o valor compensado " + pct2(r.dWI), false],
+      ["% da tarifa sem impostos (dono / tarifa sem impostos)", pct2(r.U ? r.dono / r.U : null), "tarifa sem impostos (TUSD + TE) = R$ " + f2.format(r.U) + "/MWh", false],
+      ["Deságio sobre a tarifa sem / com impostos", pct2(r.dimp) + " / " + pct2(r.dV), "1 - dono / tarifa sem impostos e 1 - dono / tarifa com impostos (tarifa com impostos = R$ " + f2.format(r.V) + "/MWh); deságio nominal " + pct2(x.d), false],
       ["Fio B pago pelo dono", mes(r.cfb), "R$ " + f2.format(r.cfb) + "/MWh (" + gd + (x.enq === 1 ? ", sem Fio B" : ", " + pct2(x.pfb) + " do Fio B SCEE, " + (x.fbCom ? "com" : "sem") + " impostos") + ")", false]
     ];
     $("n-kpis").innerHTML = kp.map(function (k) { return '<div class="card kpi' + (k[3] ? " negativo" : "") + '"><div class="rot">' + esc(k[0]) + '</div><div class="val">' + esc(k[1]) + '</div><div class="sub">' + esc(k[2]) + "</div></div>"; }).join("");
     // 2. calculo reverso
-    var vr = $("n-var").value, fixo = vr === "d" ? "VB s = " + pct2(x.s) : "deságio d = " + pct2(x.d);
+    var vr = $("n-var").value, fixo = vr === "d" ? "VB do dono = " + pct2(x.s) : "deságio nominal = " + pct2(x.d);
     var pv = lerN("n-ped"), pu = $("n-ped-u").value, mv = lerN("n-mmin"), mu = $("n-mmin-u").value;
     var pedMwh = pv == null ? null : (pu === "mwh" ? pv : (pu === "kwh" ? pv * 1000 : (q > 0 ? pv / q : null)));
     var mgMwh = mv == null ? null : (mu === "pct" ? mv / 100 * r.WI : (mu === "mwh" ? mv : (q > 0 ? mv / q : null)));
     var linha = function (a, b, c) { return "<tr><td>" + esc(a) + "</td>" + td(b, c) + "</tr>"; };
-    var mgTxt = function (v) { return "R$ " + f2.format(v) + "/MWh; " + mes(v) + "; " + pct2(r.WI ? v / r.WI : null) + " de W_I"; };
+    var mgTxt = function (v) { return "R$ " + f2.format(v) + "/MWh; " + mes(v) + "; " + pct2(r.WI ? v / r.WI : null) + " do valor compensado"; };
     var P1 = null, P2 = null;
     $("n-ped-tit").textContent = "Pedido do dono: " + (vr === "d" ? "deságio necessário" : "VB necessário") + " (" + fixo + ")";
     if (pedMwh == null) $("n-rev-ped").innerHTML = '<div class="erro">' + (pv != null && q <= 0 ? "Sem energia compensada: informe o pedido em R$/MWh." : "Informe o valor pedido pelo dono.") + "</div>";
@@ -4656,7 +4666,7 @@ a{color:var(--azul2)}
       var L1 = [linha("Pedido do dono", esc("R$ " + f4.format(pedMwh / 1000) + "/kWh; R$ " + f2.format(pedMwh) + "/MWh; " + mes(pedMwh)))];
       if (P1.v == null) L1.push(linha("Resultado", "Sem solução: " + esc(P1.motivo), "sem-sol"));
       else {
-        L1.push(linha((vr === "d" ? "Deságio d necessário" : "VB s necessário"), "<b>" + esc(pct2(P1.v)) + "</b>" + (P1.ok ? "" : " (sem solução: " + esc(P1.motivo) + ")"), P1.ok ? "" : "sem-sol"));
+        L1.push(linha((vr === "d" ? "Deságio nominal necessário" : "VB do dono necessário"), "<b>" + esc(pct2(P1.v)) + "</b>" + (P1.ok ? "" : " (sem solução: " + esc(P1.motivo) + ")"), P1.ok ? "" : "sem-sol"));
         L1.push(linha("Deságio sobre a tarifa sem / com impostos", esc(pct2(P1.dimp) + " / " + pct2(r.V ? 1 - P1.dono / r.V : null))));
         L1.push(linha("Margem líquida da Thopen", esc(mgTxt(P1.mg)), P1.mg < 0 ? "negativo" : ""));
         var viav = P1.ok && (mgMwh == null || P1.mg >= mgMwh - 1e-9);
@@ -4666,12 +4676,12 @@ a{color:var(--azul2)}
       $("n-rev-ped").innerHTML = tabela(["Item", "Valor"], L1, "", "lado");
     }
     $("n-mg-tit").textContent = "Margem mínima da Thopen: " + (vr === "d" ? "deságio mínimo" : "VB máximo") + " e teto ao dono (" + fixo + ")";
-    if (mgMwh == null) $("n-rev-mg").innerHTML = '<div class="erro">' + (mv != null && q <= 0 ? "Sem energia compensada: informe a margem em R$/MWh ou % de W_I." : "Informe a margem mínima.") + "</div>";
+    if (mgMwh == null) $("n-rev-mg").innerHTML = '<div class="erro">' + (mv != null && q <= 0 ? "Sem energia compensada: informe a margem em R$/MWh ou % do valor compensado." : "Informe a margem mínima.") + "</div>";
     else {
       P2 = negResolver(r, x, vr, null, mgMwh);
-      var L2 = [linha("Margem mínima (líquida de c = " + pct2(x.c) + ")", esc(mgTxt(mgMwh)))];
+      var L2 = [linha("Margem mínima (líquida do desconto ao cliente de " + pct2(x.c) + ")", esc(mgTxt(mgMwh)))];
       if (P2.v == null) L2.push(linha("Resultado", "Sem solução: " + esc(P2.motivo), "sem-sol"));
-      else L2.push(linha(vr === "d" ? "Deságio d mínimo" : "VB s máximo", "<b>" + esc(pct2(P2.v)) + "</b>" + (P2.ok ? "" : " (sem solução: " + esc(P2.motivo) + ")"), P2.ok ? "" : "sem-sol"));
+      else L2.push(linha(vr === "d" ? "Deságio nominal mínimo" : "VB do dono máximo", "<b>" + esc(pct2(P2.v)) + "</b>" + (P2.ok ? "" : " (sem solução: " + esc(P2.motivo) + ")"), P2.ok ? "" : "sem-sol"));
       L2.push(linha("Pagamento máximo ao dono (teto)", "<b>" + esc("R$ " + f2.format(P2.dmax) + "/MWh; " + mes(P2.dmax) + "; " + brl(P2.dmax * q * 12) + "/ano") + "</b>", P2.dmax < 0 ? "negativo" : ""));
       L2.push(linha("Teto em R$/kWh e deságio sobre a tarifa sem / com impostos", esc("R$ " + f4.format(P2.dmax / 1000) + "/kWh; " + pct2(r.U ? 1 - P2.dmax / r.U : null) + " / " + pct2(r.V ? 1 - P2.dmax / r.V : null))));
       L2.push(linha("Proposta atual x teto", esc("atual " + mes(r.dono) + "; " + (P2.dmax - r.dono >= 0 ? "folga de " + mes(P2.dmax - r.dono) : "acima do teto em " + mes(r.dono - P2.dmax)))));
@@ -4698,7 +4708,7 @@ a{color:var(--azul2)}
     });
     $("n-faixa-nota").textContent = "Abertura: deságio atual + " + f0.format(NG.abertura * 100) + " p.p.; Alvo: configuração atual; Limite: " +
       (vr === "d" ? "deságio mínimo" : "VB máximo") + " da margem mínima, arredondado a 0,01 p.p. para o lado seguro" + (P2 && P2.v != null && !P2.ok ? " (sem solução em 0 a 100%: valor limitado à faixa)" : "") +
-      ". Edite d e s em qualquer coluna; em vermelho, margem abaixo da mínima. Recalcular faixa volta aos padrões.";
+      ". Edite o deságio nominal e o VB do dono em qualquer coluna; em vermelho, margem abaixo da mínima. Recalcular faixa volta aos padrões.";
     // 4. projecao
     var P = negParams(), PJ = negProjecao(x, q, P), A = PJ.anos, ult = A[A.length - 1];
     var kq = [
@@ -4715,12 +4725,12 @@ a{color:var(--azul2)}
     var vz = function (n) { var h = ""; for (var j = 0; j < n; j++) h += td(""); return h; };
     lin.push('<tr class="tot"><td>Total</td>' + vz(8) + td(f2.format(PJ.tot.mwh)) + td(brl(PJ.tot.dono)) + td(brl(PJ.tot.th)) + td(brl(PJ.tot.mg)) + vz(3) + "</tr>");
     lin.push('<tr class="tot"><td>VPL ' + esc(pct2(P.taxa)) + " a.a.</td>" + vz(9) + td(brl(PJ.vpl.dono)) + td(brl(PJ.vpl.th)) + td(brl(PJ.vpl.mg)) + vz(3) + "</tr>");
-    $("n-proj").innerHTML = tabela(["Ano", "% Fio B", "U (R$/MWh)", "V (R$/MWh)", "Y (R$/MWh)", "Fio B do dono (R$/MWh)", "Deságio nominal d", "Preço (R$/kWh)", "Dono (R$/MWh)", "Energia compensada (MWh/ano)",
-      "Dono (R$/ano)", "Thopen (R$/ano)", "Margem líquida (R$/ano)", "Deságio s/ U (sem impostos)", "Deságio s/ V (com impostos)", "Deságio s/ W_I"], lin, "", "lado");
-    var nt = ["Ano a ano: D, E e Fio B SCEE x (1 + " + pct2(P.reaj) + ")^t" + (NG.ipca12 != null ? " (padrão: IPCA 12 meses, " + pct2(NG.ipca12) + ")" : "") +
-      "; tributos, flags, " + (P.fixo === "p" ? "" : "d = " + pct2(x.d) + ", ") + "s = " + pct2(x.s) + " e c = " + pct2(x.c) + " constantes; energia compensada x (1 - " + pct2(P.degr) + ")^t.",
-      P.fixo === "p" ? "Preço fixo: o preço ao parceiro do ano 1 (R$ " + f4.format(A[0].pk) + "/kWh) é reajustado por (1 + " + pct2(P.reaj) + ")^t e o deságio d de cada ano é recalculado para mantê-lo: d_t = 1 - (1.000 x P_t + custo do Fio B_t - s x Y_t) / U_t (cai quando o Fio B sobe: a Thopen absorve o aumento)."
-        : (x.modo === "p" ? "Deságio fixo: o d equivalente do ano 1 (" + pct2(x.d) + ") vale para todos os anos; o preço ao parceiro varia com a tarifa e o Fio B." : "Deságio d fixo em todos os anos.")];
+    $("n-proj").innerHTML = tabela(["Ano", "% Fio B", "Tarifa sem impostos (R$/MWh)", "Tarifa com impostos (R$/MWh)", "Benefício fiscal (R$/MWh)", "Fio B do dono (R$/MWh)", "Deságio nominal", "Preço (R$/kWh)", "Dono (R$/MWh)", "Energia compensada (MWh/ano)",
+      "Dono (R$/ano)", "Thopen (R$/ano)", "Margem líquida (R$/ano)", "Deságio sobre a tarifa sem impostos", "Deságio sobre a tarifa com impostos", "Deságio sobre o valor compensado"], lin, "", "lado");
+    var nt = ["Ano a ano: TUSD, TE e Fio B SCEE x (1 + " + pct2(P.reaj) + ")^t" + (NG.ipca12 != null ? " (padrão: IPCA 12 meses, " + pct2(NG.ipca12) + ")" : "") +
+      "; tributos, flags, " + (P.fixo === "p" ? "" : "deságio nominal " + pct2(x.d) + ", ") + "VB do dono " + pct2(x.s) + " e desconto ao cliente " + pct2(x.c) + " constantes; energia compensada x (1 - " + pct2(P.degr) + ")^t.",
+      P.fixo === "p" ? "Preço fixo: o preço ao parceiro do ano 1 (R$ " + f4.format(A[0].pk) + "/kWh) é reajustado por (1 + " + pct2(P.reaj) + ")^t e o deságio nominal de cada ano é recalculado para mantê-lo: deságio do ano = 1 - (1.000 x preço ao parceiro do ano + custo do Fio B do ano - VB do dono x benefício fiscal do ano) / tarifa sem impostos do ano (cai quando o Fio B sobe: a Thopen absorve o aumento)."
+        : (x.modo === "p" ? "Deságio fixo: o deságio nominal equivalente do ano 1 (" + pct2(x.d) + ") vale para todos os anos; o preço ao parceiro varia com a tarifa e o Fio B." : "Deságio nominal fixo em todos os anos.")];
     if (x.enq === 1) nt.push("GD I: sem Fio B em todos os anos.");
     else if (P.esc) nt.push("Fio B pela Lei 14.300: 2026 60%, 2027 75%, 2028 90%; a partir de 2029 a regra será definida pela ANEEL, aqui aproximada por 100%." + (A.length > 1 && A[1].donoMwh < A[0].donoMwh ? " A subida do % do Fio B reduz o recebimento do dono por MWh." : ""));
     else nt.push("Fio B fixo em " + pct2(x.pfb) + " (escalonamento desligado).");
@@ -4736,8 +4746,8 @@ a{color:var(--azul2)}
   }
   function negUsina() {
     var G = arrUlt.G, tp = G.tp, nome = $("a-usina").value.trim();
-    var u = tp === "ufv" ? "UFV de " + f2.format((lerN("a-kwp") || 0) / 1000) + " MWp" : (tp === "cgh" ? "CGH de " + f2.format((lerN("a-kw") || 0) / 1000) + " MW" : "usina com geração informada");
-    return (nome ? nome + ", " : "") + u + ", geração média de " + f2.format(G.ger) + " MWh/mês";
+    var u = tp === "ufv" ? "UFV de " + f2.format((lerN("a-kwp") || 0) / 1000) + " MWp" : (tp === "cgh" ? "CGH de " + f2.format((lerN("a-kw") || 0) / 1000) + " MW" : "");
+    return (nome ? nome + ", " : "") + (u ? u + ", " : "") + "geração média de " + f2.format(G.ger) + " MWh/mês";
   }
   function negAnoTxt(A, k) { var a = A[k - 1]; return a ? "ano " + k + " (" + a.ano + "): R$ " + f2.format(a.dono) + "/ano (R$ " + f2.format(a.dono / 12) + "/mês)" : null; }
   function negProposta() {
@@ -4750,7 +4760,7 @@ a{color:var(--azul2)}
       "Usina: " + negUsina(),
       "Distribuidora: " + arrDist + (i.uf ? " (" + i.uf + ")" : "") + "; modalidade " + n.gd,
       (x.modo === "p" ? "Condições: preço de R$ " + f4.format(x.P) + "/kWh compensado ao proprietário, líquido do Fio B, e VB de " + pct2(x.s) + " do benefício fiscal ao proprietário"
-        : "Condições: deságio de " + pct2(x.d) + " sobre a tarifa sem tributos (TUSD + TE) e VB de " + pct2(x.s) + " do benefício fiscal ao proprietário"),
+        : "Condições: deságio de " + pct2(x.d) + " sobre a tarifa sem impostos (TUSD + TE) e VB de " + pct2(x.s) + " do benefício fiscal ao proprietário"),
       "Valor ao proprietário no ano 1 (" + A[0].ano + "): R$ " + f4.format(A[0].pk) + "/kWh compensado (R$ " + f2.format(A[0].donoMwh) + "/MWh), líquido do Fio B, cerca de R$ " + f2.format(A[0].dono / 12) + "/mês",
       "Equivale a deságio de " + pct2(A[0].dimp) + " sobre a tarifa sem impostos (R$ " + f4.format(A[0].U / 1000) + "/kWh) e de " + pct2(A[0].dV) + " sobre a tarifa com impostos (R$ " + f4.format(A[0].V / 1000) + "/kWh)",
       P.fixo === "p" ? "Preço reajustado anualmente pelo índice de " + pct2(P.reaj) + " ao ano" : "Deságio mantido ao longo do contrato; o valor acompanha os reajustes da tarifa e do Fio B",
@@ -4761,19 +4771,19 @@ a{color:var(--azul2)}
   }
   function negInterna() {
     if (!negUlt) return "";
-    var n = negUlt, x = n.x, r = n.r, q = n.q, P2 = n.P2, P1 = n.P1, PJ = n.PJ, nv = n.vr === "d" ? "deságio d" : "VB s";
+    var n = negUlt, x = n.x, r = n.r, q = n.q, P2 = n.P2, P1 = n.P1, PJ = n.PJ, nv = n.vr === "d" ? "deságio nominal" : "VB do dono";
     var m = function (v) { return "R$ " + f2.format(v * q) + "/mês"; };
     var L = [negProposta(), "", "Análise interna (não enviar ao proprietário)",
-      "Configuração atual: " + (x.modo === "p" ? "preço R$ " + f4.format(x.P) + "/kWh, d equivalente " : "d ") + pct2(x.d) + ", s " + pct2(x.s) + ", c " + pct2(x.c) + "; dono R$ " + f4.format(r.pk) + "/kWh, R$ " + f2.format(r.dono) + "/MWh (" + m(r.dono) + "); margem líquida Thopen R$ " + f2.format(r.mg) + "/MWh (" + m(r.mg) + ", " + pct2(r.WI ? r.mg / r.WI : null) + " de W_I)",
-      "Tarifas (R$/kWh): U " + f4.format(r.U / 1000) + ", V " + f4.format(r.V / 1000) + ", W_I " + f4.format(r.WI / 1000) + ", Fio B do dono " + f4.format(r.cfb / 1000) + "; deságio do dono sobre U " + pct2(r.dimp) + ", sobre V " + pct2(r.dV) + ", sobre W_I " + pct2(r.dWI)];
-    if (P2) L.push("Margem mínima: R$ " + f2.format(n.mgMwh) + "/MWh (" + m(n.mgMwh) + ", " + pct2(r.WI ? n.mgMwh / r.WI : null) + " de W_I); " +
+      "Configuração atual: " + (x.modo === "p" ? "preço R$ " + f4.format(x.P) + "/kWh, deságio nominal equivalente " : "deságio nominal ") + pct2(x.d) + ", VB do dono " + pct2(x.s) + ", desconto ao cliente " + pct2(x.c) + "; dono R$ " + f4.format(r.pk) + "/kWh, R$ " + f2.format(r.dono) + "/MWh (" + m(r.dono) + "); margem líquida Thopen R$ " + f2.format(r.mg) + "/MWh (" + m(r.mg) + ", " + pct2(r.WI ? r.mg / r.WI : null) + " do valor compensado)",
+      "Tarifas (R$/kWh): sem impostos " + f4.format(r.U / 1000) + ", com impostos " + f4.format(r.V / 1000) + ", valor compensado " + f4.format(r.WI / 1000) + ", Fio B do dono " + f4.format(r.cfb / 1000) + "; deságio do dono sobre a tarifa sem impostos " + pct2(r.dimp) + ", sobre a tarifa com impostos " + pct2(r.dV) + ", sobre o valor compensado " + pct2(r.dWI)];
+    if (P2) L.push("Margem mínima: R$ " + f2.format(n.mgMwh) + "/MWh (" + m(n.mgMwh) + ", " + pct2(r.WI ? n.mgMwh / r.WI : null) + " do valor compensado); " +
       (P2.v == null ? "sem solução (" + P2.motivo + ")" : (n.vr === "d" ? "deságio mínimo " : "VB máximo ") + pct2(P2.v) + (P2.ok ? "" : " (sem solução: " + P2.motivo + ")")) +
       "; pagamento máximo ao dono R$ " + f2.format(P2.dmax) + "/MWh (" + m(P2.dmax) + ")");
     if (P1) L.push("Pedido do dono: R$ " + f2.format(n.pedMwh) + "/MWh (" + m(n.pedMwh) + "); " +
-      (P1.v == null ? "sem solução (" + P1.motivo + ")" : nv + " necessário " + pct2(P1.v) + (P1.ok ? "" : " (sem solução)") + "; margem Thopen " + m(P1.mg) + " (" + pct2(r.WI ? P1.mg / r.WI : null) + " de W_I)" +
+      (P1.v == null ? "sem solução (" + P1.motivo + ")" : nv + " necessário " + pct2(P1.v) + (P1.ok ? "" : " (sem solução)") + "; margem Thopen " + m(P1.mg) + " (" + pct2(r.WI ? P1.mg / r.WI : null) + " do valor compensado)" +
         (n.mgMwh != null && P1.ok ? (P1.mg >= n.mgMwh - 1e-9 ? "; viável" : "; abaixo da margem mínima") : "")));
-    L.push("Faixa: " + NFX.map(function (c) { var f = n.FX[c[0]]; return c[1] + " d " + pct2(f.d) + ", s " + pct2(f.s) + ", preço R$ " + f4.format(f.r.pk) + "/kWh, dono " + m(f.r.dono) + ", deságio s/ U " + pct2(f.r.dimp) + ", s/ V " + pct2(f.r.dV) + ", s/ W_I " + pct2(f.r.dWI) + ", margem " + m(f.r.mg) + (f.abx ? " (abaixo da mínima)" : ""); }).join("; "));
-    L.push("Projeção (" + (n.P.fixo === "p" ? "preço fixo reajustado pelo índice" : "deságio fixo") + "): " + PJ.anos.map(function (a) { return a.ano + " d " + pct2(a.d) + ", R$ " + f4.format(a.pk) + "/kWh, s/ U " + pct2(a.dimp) + ", s/ V " + pct2(a.dV); }).join("; "));
+    L.push("Faixa: " + NFX.map(function (c) { var f = n.FX[c[0]]; return c[1] + ": deságio nominal " + pct2(f.d) + ", VB do dono " + pct2(f.s) + ", preço R$ " + f4.format(f.r.pk) + "/kWh, dono " + m(f.r.dono) + ", deságio sobre a tarifa sem impostos " + pct2(f.r.dimp) + ", sobre a tarifa com impostos " + pct2(f.r.dV) + ", sobre o valor compensado " + pct2(f.r.dWI) + ", margem " + m(f.r.mg) + (f.abx ? " (abaixo da mínima)" : ""); }).join("; "));
+    L.push("Projeção (" + (n.P.fixo === "p" ? "preço fixo reajustado pelo índice" : "deságio fixo") + "): " + PJ.anos.map(function (a) { return a.ano + ": deságio nominal " + pct2(a.d) + ", R$ " + f4.format(a.pk) + "/kWh, deságio sobre a tarifa sem impostos " + pct2(a.dimp) + ", sobre a tarifa com impostos " + pct2(a.dV); }).join("; "));
     L.push("Projeção " + n.P.prazo + " anos: total dono R$ " + f2.format(PJ.tot.dono) + ", total margem Thopen R$ " + f2.format(PJ.tot.mg) + "; VPL a " + pct2(n.P.taxa) + " a.a.: dono R$ " + f2.format(PJ.vpl.dono) + ", Thopen (margem líquida) R$ " + f2.format(PJ.vpl.mg));
     return L.join("\n");
   }
@@ -4799,16 +4809,16 @@ a{color:var(--azul2)}
     ["Distribuidora", function (x) { return x.d; }, null],
     ["UF", function (x) { return (I[x.d] || {}).uf || ""; }, null],
     ["Vigência", function (x) { return x.m.ini; }, dataBr],
-    ["D (TUSD)", function (x) { return x.m.tusd; }, num], ["E (TE)", function (x) { return x.m.te; }, num],
+    ["TUSD", function (x) { return x.m.tusd; }, num], ["TE", function (x) { return x.m.te; }, num],
     ["ICMS", function (x) { return x.m.tx.i; }, pct2], ["PIS+COFINS", function (x) { return x.m.tx.pis + x.m.tx.cof; }, pct2],
     ["ICMS na compensada (TE/TUSD)", function (x) { return x.m.tx.te * 2 + x.m.tx.tu; }, function (v, x) { return sn(x.m.tx.te) + " / " + sn(x.m.tx.tu); }],
-    ["s", function (x) { return x.m.tx.s; }, pct2],
-    ["U", function (x) { return x.r ? x.r.U : null; }, num], ["V", function (x) { return x.r ? x.r.V : null; }, num],
-    ["FB_ef", function (x) { return x.r ? x.r.fb : null; }, num, 2],
-    ["W", function (x) { return x.r ? x.r.W : null; }, num], ["Y", function (x) { return x.r ? x.r.Y : null; }, num],
-    ["X", function (x) { return x.r ? x.r.X : null; }, num], ["Z", function (x) { return x.r ? x.r.Z : null; }, num],
+    ["VB do dono", function (x) { return x.m.tx.s; }, pct2],
+    ["Tarifa sem impostos", function (x) { return x.r ? x.r.U : null; }, num], ["Tarifa com impostos", function (x) { return x.r ? x.r.V : null; }, num],
+    ["Fio B efetivo", function (x) { return x.r ? x.r.fb : null; }, num, 2],
+    ["Valor compensado", function (x) { return x.r ? x.r.W : null; }, num], ["Benefício fiscal", function (x) { return x.r ? x.r.Y : null; }, num],
+    ["VB", function (x) { return x.r ? x.r.X : null; }, num], ["COMP", function (x) { return x.r ? x.r.Z : null; }, num],
     ["TUSD+TE na planilha", function (x) { return x.rt; }, num],
-    ["Diferença (U - planilha)", function (x) { return x.dif; }, function (v, x) { return v == null ? "-" : '<span class="' + cls(v) + '">' + (v > 0 ? "+" : "") + num(v) + " (" + pct(x.rt ? v / x.rt : null) + ")</span>"; }]
+    ["Diferença (tarifa sem impostos - planilha)", function (x) { return x.dif; }, function (v, x) { return v == null ? "-" : '<span class="' + cls(v) + '">' + (v > 0 ? "+" : "") + num(v) + " (" + pct(x.rt ? v / x.rt : null) + ")</span>"; }]
   ];
   function renderThopen() {
     var q = $("t-busca").value.trim(), so = $("t-ativas").checked, sp = $("t-plan").checked, gd2 = tEnq === 2;
@@ -4822,7 +4832,7 @@ a{color:var(--azul2)}
       if (a == null && b == null) r = 0; else if (a == null) return 1; else if (b == null) return -1;
       else r = typeof a === "string" ? a.localeCompare(b, "pt-BR") : a - b;
       return tOrd.asc ? r : -r; });
-    $("t-tit").textContent = "Tabela Thopen: " + (gd2 ? "GD II (FB_ef = Fio B efetivo da vigência atual)" : "GD I, como na planilha (FB_ef = 0)") + ", " + itens.length + " distribuidoras";
+    $("t-tit").textContent = "Tabela Thopen: " + (gd2 ? "GD II (Fio B efetivo da vigência atual)" : "GD I, como na planilha (Fio B efetivo = 0)") + ", " + itens.length + " distribuidoras";
     var seta = function (j) { return tOrd.k === j ? (tOrd.asc ? " ▲" : " ▼") : ""; };
     var h = "<table><thead><tr>" + cols.map(function (c, j) { return '<th class="ord' + (j ? "" : " nome") + '" data-tk="' + j + '">' + esc(c[0]) + seta(j) + "</th>"; }).join("") + "</tr></thead><tbody>";
     h += itens.map(function (x) {
@@ -4831,12 +4841,12 @@ a{color:var(--azul2)}
         if (!j) return '<td class="nome"><a href="#calculadora" data-calc="' + esc(x.d) + '" title="Abrir na Calculadora">' + esc(rot(x.d)) + "</a>" + (I[x.d].a ? "" : ' <span class="mut">(inativa)</span>') + "</td>";
         if (j === 1) return "<td>" + esc(v) + "</td>";
         var txt = c[2] ? c[2](v, x) : esc(v);
-        return td(c[0] === "V" || c[0] === "W" ? "<b>" + txt + "</b>" : txt);
+        return td(c[0] === "Tarifa com impostos" || c[0] === "Valor compensado" ? "<b>" + txt + "</b>" : txt);
       }).join("") + "</tr>"; }).join("");
     $("t-tab").innerHTML = itens.length ? h + "</tbody></table>" : '<div class="erro">Nenhuma distribuidora para o filtro.</div>';
-    $("t-nota").textContent = "R$/MWh. Alíquotas, flags de ICMS e repasse s: padrões do painel (fonte de cada um na Calculadora e no Excel, aba Impostos). " +
-      "TUSD+TE na planilha: referência fixa da planilha Tarifas.xlsx do usuário (" + Object.keys(D.ref).length + " distribuidoras); diferença = U (ANEEL vigente) menos a planilha. " +
-      (gd2 ? "GD II: sem Fio B SCEE válido, W, Y, X e Z ficam em branco. " : "") + "Clique no nome para abrir na Calculadora. Mesma tabela no Excel (aba Calculadora (tabela)).";
+    $("t-nota").textContent = "R$/MWh. Alíquotas, flags de ICMS e VB do dono: padrões do painel (fonte de cada um na Calculadora e no Excel, aba Impostos). " +
+      "TUSD+TE na planilha: referência fixa da planilha Tarifas.xlsx do usuário (" + Object.keys(D.ref).length + " distribuidoras); diferença = tarifa sem impostos (ANEEL vigente) menos a planilha. " +
+      (gd2 ? "GD II: sem Fio B SCEE válido, valor compensado, benefício fiscal, VB e COMP ficam em branco. " : "") + "Clique no nome para abrir na Calculadora. Mesma tabela no Excel (aba Calculadora (tabela)).";
   }
   $("t-tab").addEventListener("click", function (e) {
     var a = e.target.closest("[data-calc]");
