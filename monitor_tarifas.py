@@ -4398,12 +4398,12 @@ a{color:var(--azul2)}
     arrTarifas(x, r);
     // Linha 1: preço ao parceiro e os deságios sobre U, V e W_I lado a lado. Linha 2: valores em R$.
     var kp1 = [
-      ["Preço ao parceiro", "R$ " + f4.format(r.pk) + "/kWh", num(r.dono) + " R$/MWh, líquido do Fio B" + (mp ? " (informado)" : " (resultante do deságio)"), r.pk < 0],
-      ["Deságio sobre U (sem impostos)", pct2(r.dimp), "1 - " + num(r.dono) + " / " + num(r.U) + " (" + gd + ")", false,
+      ["Preço pago ao parceiro (dono da usina)", "R$ " + f4.format(r.pk) + "/kWh", num(r.dono) + " R$/MWh, líquido do Fio B" + (mp ? " (informado)" : " (resultante do deságio)"), r.pk < 0],
+      ["Deságio sobre a tarifa sem impostos (TUSD + TE)", pct2(r.dimp), "U = " + num(r.U) + " R$/MWh; 1 - " + num(r.dono) + " / " + num(r.U) + " (" + gd + ")", false,
         "Deságio implícito = 1 - pagamento ao dono / U, com U = TUSD + TE (tarifa sem tributos). Considera o VB (s x Y soma ao dono) e o Fio B (subtrai do dono): diminui quando s aumenta e aumenta com o Fio B. Fica negativo quando o dono recebe mais que a tarifa U, o que é possível com VB alto e deságio baixo."],
-      ["Deságio sobre V (com impostos)", pct2(r.dV), "1 - " + num(r.dono) + " / " + num(r.V), false,
+      ["Deságio sobre a tarifa com impostos (ICMS, PIS e COFINS)", pct2(r.dV), "V = " + num(r.V) + " R$/MWh; 1 - " + num(r.dono) + " / " + num(r.V), false,
         "V = U x k_full (tarifa cheia com ICMS e PIS/COFINS)."],
-      ["Deságio sobre W_I (valor compensado)", pct2(r.dWI), "1 - " + num(r.dono) + " / " + num(r.WI), false,
+      ["Deságio sobre o valor compensado na conta do cliente", pct2(r.dWI), "W_I = " + num(r.WI) + " R$/MWh (tarifa com os tributos evitados); 1 - " + num(r.dono) + " / " + num(r.WI), false,
         "W_I = D x k_TUSD + E x k_TE: valor que o crédito compensa na conta do cliente, com os tributos evitados (total a dividir entre dono e Thopen)."]
     ];
     var kp2 = [
