@@ -3129,7 +3129,7 @@ a{color:var(--azul2)}
       <label>Definir por<select id="a-modo" style="min-width:220px"><option value="d">Deságio (%)</option><option value="p">Preço ao parceiro (R$/kWh)</option></select></label>
       <label id="a-d-lab">Deságio d sobre a tarifa (%)<input type="text" inputmode="decimal" id="a-d"></label>
       <label id="a-p-lab" style="display:none" title="Pagamento líquido ao dono da usina por kWh compensado, já descontado o custo do Fio B">Preço ao parceiro P (R$/kWh, líquido do Fio B)<input type="text" inputmode="decimal" id="a-p" placeholder="ex.: 0,45"></label>
-      <label>VB s: parte do benefício para o dono (%)<input type="text" inputmode="decimal" id="a-s"></label>
+      <label title="Repasse do benefício fiscal (Y = W_I - U) ao dono. 0% = 100% da Thopen; 50% = metade para cada um.">VB s: parte do benefício para o dono (%; 0% = tudo da Thopen)<input type="text" inputmode="decimal" id="a-s"></label>
       <label>Desconto ao cliente c (% de W_I)<input type="text" inputmode="decimal" id="a-c"></label>
     </div>
     <div class="nota-sim" id="a-modo-info"></div>
@@ -3150,7 +3150,7 @@ a{color:var(--azul2)}
     </div>
     <div class="nota-sim" id="a-fontes"></div>
   </section>
-  <div class="grid kpis" id="a-kpis" style="margin-top:16px"></div>
+  <div id="a-kpis" style="margin-top:16px"></div>
   <section class="card"><h2>Resultados</h2><div class="tab" id="a-res"></div></section>
   <section class="card"><h2>Memória de cálculo (por MWh compensado)</h2><div class="tab" id="a-mem"></div><div class="nota-sim" id="a-nota"></div></section>
   <section class="card">
@@ -4396,20 +4396,26 @@ a{color:var(--azul2)}
         (fora ? " Atenção: fora de 0 a 100%; o cálculo continua, mas " + (x.d < 0 ? "o preço supera o que o deságio zero paga ao dono." : "o preço exige deságio acima de 100%.") : "")
       : "Preço resultante ao parceiro: R$ " + f4.format(r.pk) + "/kWh (R$ " + f2.format(r.dono) + "/MWh compensado), líquido do Fio B. Deságio sobre a tarifa sem impostos " + pct2(r.dimp) + "; com impostos " + pct2(r.dV) + ".";
     arrTarifas(x, r);
-    var kp = [
-      ["Pagamento ao dono", brl(r.dono * q) + "/mês", num(r.dono) + " R$/MWh; " + brl(r.dono * q * 12) + "/ano", r.dono < 0],
-      ["Preço ao parceiro", "R$ " + f4.format(r.pk) + "/kWh", "pagamento por kWh compensado, líquido do Fio B" + (mp ? " (informado)" : " (resultante do deságio)"), r.pk < 0],
-      ["Parte da Thopen", brl(r.th * q) + "/mês", num(r.th) + " R$/MWh; " + brl(r.th * q * 12) + "/ano", false],
-      ["Margem líquida da Thopen", brl(r.mg * q) + "/mês", num(r.mg) + " R$/MWh, após desconto ao cliente de " + pct2(x.c) + " de W_I", r.mg < 0],
-      [mp ? "Deságio nominal equivalente (sobre a tarifa)" : "Deságio nominal (sobre a tarifa)", pct2(x.d), (mp ? "equivalente ao preço de R$ " + f4.format(x.P) + "/kWh; " : "parâmetro d, ") + "só sobre U = " + num(r.U) + " R$/MWh" + (mp && fora ? "; fora de 0 a 100%" : ""), mp && fora,
-        "Deságio negociado d, aplicado só sobre U = TUSD + TE (tarifa sem tributos): o dono recebe (1 - d) x U, mais s x Y, menos o Fio B. No modo preço, d é o deságio que entrega o preço informado com o VB s atual."],
-      ["Deságio sobre a tarifa sem impostos (implícito)", pct2(r.dimp), "1 - dono / U = 1 - " + num(r.dono) + " / " + num(r.U) + " (" + gd + ")", false,
+    // Linha 1: preço ao parceiro e os deságios sobre U, V e W_I lado a lado. Linha 2: valores em R$.
+    var kp1 = [
+      ["Preço ao parceiro", "R$ " + f4.format(r.pk) + "/kWh", num(r.dono) + " R$/MWh, líquido do Fio B" + (mp ? " (informado)" : " (resultante do deságio)"), r.pk < 0],
+      ["Deságio sobre U (sem impostos)", pct2(r.dimp), "1 - " + num(r.dono) + " / " + num(r.U) + " (" + gd + ")", false,
         "Deságio implícito = 1 - pagamento ao dono / U, com U = TUSD + TE (tarifa sem tributos). Considera o VB (s x Y soma ao dono) e o Fio B (subtrai do dono): diminui quando s aumenta e aumenta com o Fio B. Fica negativo quando o dono recebe mais que a tarifa U, o que é possível com VB alto e deságio baixo."],
-      ["Deságio sobre a tarifa com impostos", pct2(r.dV), "1 - dono / V = 1 - " + num(r.dono) + " / " + num(r.V) + "; sobre o valor compensado W_I: " + pct2(r.dWI), false,
-        "V = U x k_full (tarifa com ICMS e PIS/COFINS). Referência: deságio sobre o valor compensado = 1 - dono / W_I, W_I = D x k_TUSD + E x k_TE."]
+      ["Deságio sobre V (com impostos)", pct2(r.dV), "1 - " + num(r.dono) + " / " + num(r.V), false,
+        "V = U x k_full (tarifa cheia com ICMS e PIS/COFINS)."],
+      ["Deságio sobre W_I (valor compensado)", pct2(r.dWI), "1 - " + num(r.dono) + " / " + num(r.WI), false,
+        "W_I = D x k_TUSD + E x k_TE: valor que o crédito compensa na conta do cliente, com os tributos evitados (total a dividir entre dono e Thopen)."]
     ];
-    $("a-kpis").innerHTML = kp.map(function (k) {
-      return '<div class="card kpi' + (k[3] ? " negativo" : "") + '"' + (k[4] ? ' title="' + esc(k[4]) + '"' : "") + '><div class="rot">' + esc(k[0]) + (k[4] ? ' <span class="mut">(?)</span>' : "") + '</div><div class="val">' + esc(k[1]) + '</div><div class="sub">' + esc(k[2]) + "</div></div>"; }).join("");
+    var kp2 = [
+      ["Pagamento ao dono", brl(r.dono * q) + "/mês", num(r.dono) + " R$/MWh; " + brl(r.dono * q * 12) + "/ano", r.dono < 0],
+      ["Parte da Thopen", brl(r.th * q) + "/mês", num(r.th) + " R$/MWh; " + brl(r.th * q * 12) + "/ano; fica com " + pct2(1 - x.s) + " do VB", false],
+      ["Margem líquida da Thopen", brl(r.mg * q) + "/mês", num(r.mg) + " R$/MWh, após desconto ao cliente de " + pct2(x.c) + " de W_I", r.mg < 0],
+      [mp ? "Deságio nominal equivalente (d)" : "Deságio nominal (d)", pct2(x.d), (mp ? "equivalente ao preço de R$ " + f4.format(x.P) + "/kWh; " : "parâmetro d, ") + "só sobre U; VB do dono " + pct2(x.s) + (mp && fora ? "; fora de 0 a 100%" : ""), mp && fora,
+        "Deságio negociado d, aplicado só sobre U = TUSD + TE (tarifa sem tributos): o dono recebe (1 - d) x U, mais s x Y, menos o Fio B. No modo preço, d é o deságio que entrega o preço informado com o VB s atual. Com VB 0% e sem Fio B, d = deságio sobre U."]
+    ];
+    var card = function (k) {
+      return '<div class="card kpi' + (k[3] ? " negativo" : "") + '"' + (k[4] ? ' title="' + esc(k[4]) + '"' : "") + '><div class="rot">' + esc(k[0]) + (k[4] ? ' <span class="mut">(?)</span>' : "") + '</div><div class="val">' + esc(k[1]) + '</div><div class="sub">' + esc(k[2]) + "</div></div>"; };
+    $("a-kpis").innerHTML = '<div class="grid kpis">' + kp1.map(card).join("") + '</div><div class="grid kpis" style="margin-top:12px">' + kp2.map(card).join("") + "</div>";
     var f3 = function (v) { return v == null || !isFinite(v) ? "-" : f2.format(v); };
     var R = [
       ["Geração média", null, f3(G.ger) + " MWh", f3(G.ger * 12) + " MWh", false],
