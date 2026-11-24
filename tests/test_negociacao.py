@@ -147,6 +147,62 @@ def test_identidade_anual():
         assert abs(x["margem"] - (x["thopen"] - 0.05 * x["W_I"] * q)) < 1e-6
 
 
+# ------------------------------------------------ modo preco (R$/kWh) e desagios sobre U, V e W_I
+
+def test_preco_kwh_cpfl_gd1():
+    r = mt.calc_arrendamento(**CPFL, s=0.5, d=0.3)
+    assert round(r["U"], 2) == 739.45 and round(r["V"], 2) == 949.23 and round(r["W_I"], 2) == 845.42
+    d = mt.desagio_por_preco(r, 0.5706)
+    assert abs(d - 0.30) < 1e-5, d
+    assert round(r["preco_kwh"], 4) == 0.5706
+    assert round(r["desagio_v"] * 100, 2) == 39.89 and abs(r["desagio_v"] - (1 - r["dono"] / r["V"])) < 1e-12
+    assert round(r["desagio_wi"] * 100, 2) == 32.51 and abs(r["desagio_wi"] - (1 - r["dono"] / r["W_I"])) < 1e-12
+    assert round(1 - 570.60 / 949.23, 4) == 0.3989 and round(1 - 570.60 / 845.42, 4) == 0.3251
+
+
+def test_preco_kwh_enel_gd2_2026():
+    r = mt.calc_arrendamento(**ENEL, s=0.5, d=0.3, fb_ef=ENEL_FIOB * 0.6)
+    assert round(r["dono"], 2) == 447.57 and round(r["preco_kwh"], 5) == 0.44757
+    assert round(r["U"], 2) == 789.38 and round(r["desagio_impl"] * 100, 2) == 43.30
+    assert round(r["V"], 2) == 1016.69 and round(r["desagio_v"] * 100, 2) == 55.98
+    U, W, Y, kf = ref_base(472.42, 316.96, 0.18, 0.00945 + 0.04369, 1, 0)
+    assert abs(r["V"] - U * kf) < 1e-9
+
+
+def test_ida_e_volta_modos():
+    for kw in (dict(**CPFL), dict(**ENEL, fb_ef=ENEL_FIOB * 0.6)):
+        for d0 in (0.0, 0.2, 0.3, 0.45):
+            r = mt.calc_arrendamento(**kw, s=0.5, d=d0)
+            d = mt.desagio_por_preco(r, r["preco_kwh"])  # desagio -> preco -> desagio
+            assert abs(d - d0) < 1e-12
+            r2 = mt.calc_arrendamento(**kw, s=0.5, d=d)  # preco -> desagio -> preco
+            assert abs(r2["preco_kwh"] - r["preco_kwh"]) < 1e-12
+    # preco 0,45 na Enel SP GD II: d equivalente bate com o calculo reverso do pedido de 450 R$/MWh
+    r = mt.calc_arrendamento(**ENEL, s=0.5, d=0.3, fb_ef=ENEL_FIOB * 0.6)
+    o = mt.resolver_arrendamento(r, "d", dono=450.0)
+    assert abs(mt.desagio_por_preco(r, 0.45) - o["valor"]) < 1e-12
+    # fora de [0, 1]: calcula mesmo assim
+    assert mt.desagio_por_preco(r, 2.0) < 0 and mt.desagio_por_preco(r, -0.5) > 1
+
+
+def test_projecao_preco_fixo():
+    reaj = 0.045
+    p = mt.projecao_arrendamento(**ENEL, s=0.5, d=0.3, fiob=ENEL_FIOB, gd=2, mwh_mes=1.0, prazo=6, ano_ini=2026,
+                                 reajuste=reaj, fixar="preco", preco_kwh=0.45)
+    ds = [a["d"] for a in p["anos"]]
+    for a in p["anos"]:
+        assert abs(a["preco_kwh"] - 0.45 * (1 + reaj) ** a["t"]) < 1e-12, a
+        assert abs(a["dono_mwh"] - 450 * (1 + reaj) ** a["t"]) < 1e-9
+    assert len({round(x, 9) for x in ds}) > 1 and ds[1] < ds[0]  # Fio B 60% -> 75%: d cai para manter o preco
+    # sem preco informado: usa o preco do ano 1 com o d informado; ano 1 identico ao modo desagio
+    pd_ = mt.projecao_arrendamento(**ENEL, s=0.5, d=0.3, fiob=ENEL_FIOB, gd=2, prazo=3, ano_ini=2026, reajuste=reaj)
+    pp = mt.projecao_arrendamento(**ENEL, s=0.5, d=0.3, fiob=ENEL_FIOB, gd=2, prazo=3, ano_ini=2026, reajuste=reaj,
+                                  fixar="preco")
+    assert abs(pp["anos"][0]["d"] - 0.3) < 1e-12 and abs(pp["anos"][0]["dono"] - pd_["anos"][0]["dono"]) < 1e-9
+    assert abs(pp["preco_kwh"] - pd_["anos"][0]["preco_kwh"]) < 1e-12
+    assert all(a["d"] == 0.3 for a in pd_["anos"])
+
+
 if __name__ == "__main__":
     import inspect
     n = 0
