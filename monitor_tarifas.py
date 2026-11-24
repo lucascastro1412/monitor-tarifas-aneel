@@ -29,8 +29,9 @@ Complementos:
 Cada execucao:
   1. atualiza os recortes (download so do que mudou) e o IPCA;
   2. normaliza (datas, valores, duplicatas);
-  3. compara com o snapshot salvo em data/ pela chave de negocio;
-  4. registra mudancas em data/log_mudancas.csv;
+  3. compara com o snapshot salvo em data/ pela chave de negocio. O snapshot e CUMULATIVO: linha que some da
+     fonte fica, com removida_fonte_em = data em que sumiu, e continua no historico do painel;
+  4. registra mudancas em data/log_mudancas.csv (remocoes como removida_na_fonte, sem alerta);
   5. se houver mudanca, regera os paineis Excel e HTML e escreve alerta.md.
 
 Roda 1 vez por dia no PC (rodar_local.ps1, agendado as 07:30), que faz commit e push de data/ e dos
@@ -151,6 +152,13 @@ SERIES = {
                  "grupo_a": True},
     "fiob_a": {"arquivo": "fiob_grupo_a.csv", "valores": ["fiob"], "rotulo": "Fio B Grupo A", "grupo_a": True},
 }
+# Snapshot cumulativo: a linha que some da fonte continua no snapshot com a data em que sumiu (vazio = ativa).
+COL_REMOVIDA = "removida_fonte_em"
+# Guarda contra falha da fonte (ver queda_suspeita)
+QUEDA_MAX = 0.20
+REMOCAO_MIN_BLOQUEIO = 50
+DIAS_AVISO_REMOCAO = 90  # o painel avisa as remocoes da fonte dos ultimos N dias
+ACEITAR_QUEDA = False    # --aceitar-queda: desliga as guardas de queda (recorte e snapshot) nesta execucao
 
 # ---- Grupo A (media e alta tensao)
 # Nome base dos paineis gerados (Excel e HTML)
@@ -449,7 +457,7 @@ def atualizar_recortes(info: dict | None, pedidos: dict, dados: Path, meta_ant: 
                 try:
                     df = ler_parquet(arq, fonte, inicio_min)
                     print(f"  {nome}: {len(df)} linhas no recorte", flush=True)
-                    if cache.exists() and n_ant and len(df) < 0.8 * n_ant:
+                    if cache.exists() and n_ant and len(df) < (1 - QUEDA_MAX) * n_ant and not ACEITAR_QUEDA:
                         raise RuntimeError(f"recorte novo com {len(df)} linhas contra {n_ant} no cache "
                                            "(queda > 20%; arquivo incompleto?)")
                     df.to_csv(cache, index=False, encoding="utf-8")
@@ -655,24 +663,59 @@ def normalizar(bruto: pd.DataFrame, mapa: dict, valores: list[str]) -> pd.DataFr
     return df.sort_values(["distribuidora", "inicio", "chave"]).reset_index(drop=True)
 
 
+def com_marca(df: pd.DataFrame) -> pd.DataFrame:
+    """Garante a coluna removida_fonte_em (vazia = linha ativa na fonte), sem NaN."""
+    df = df.copy()
+    if COL_REMOVIDA not in df.columns:
+        df[COL_REMOVIDA] = ""
+    df[COL_REMOVIDA] = df[COL_REMOVIDA].fillna("").astype(str).str.strip()
+    return df
+
+
+def ativas(df: pd.DataFrame) -> pd.DataFrame:
+    """Linhas do snapshot que ainda estao na fonte."""
+    return df if COL_REMOVIDA not in df.columns else df[df[COL_REMOVIDA].fillna("") == ""]
+
+
 def carregar(caminho: Path, valores: list[str]) -> pd.DataFrame | None:
     if not caminho.exists():
         return None
     df = pd.read_csv(caminho, dtype=str, keep_default_na=False, encoding="utf-8")
     for c in valores:
         df[c] = pd.to_numeric(df[c], errors="coerce").round(6)
-    return adicionar_chave(df)
+    return adicionar_chave(com_marca(df))
 
 
 def salvar(df: pd.DataFrame, caminho: Path, valores: list[str]) -> None:
-    df[DIMS + valores].to_csv(caminho, index=False, encoding="utf-8", float_format="%.6f")
+    com_marca(df)[DIMS + valores + [COL_REMOVIDA]].to_csv(caminho, index=False, encoding="utf-8",
+                                                           float_format="%.6f")
 
 
-def comparar(antigo: pd.DataFrame, novo: pd.DataFrame, valores: list[str]):
-    a = antigo.set_index("chave")
-    n = novo.set_index("chave")
+def ordenar_snapshot(df: pd.DataFrame) -> pd.DataFrame:
+    return df.sort_values(["distribuidora", "inicio", "chave"]).reset_index(drop=True)
+
+
+def comparar(antigo: pd.DataFrame, novo: pd.DataFrame, valores: list[str], data_remocao: str = ""):
+    """Compara o recorte novo da fonte com o snapshot CUMULATIVO, pela chave de negocio.
+
+    Retorna (novos, alterados, removidos, voltaram, snapshot):
+    - novos: chaves que nunca estiveram no snapshot;
+    - alterados: chaves do recorte ja presentes no snapshot (ativas ou removidas) com valor diferente;
+    - removidos: chaves ATIVAS no snapshot que sumiram do recorte; ficam no snapshot com
+      removida_fonte_em = data_remocao (as ja marcadas mantem a data original);
+    - voltaram: chaves marcadas como removidas que reapareceram com o mesmo valor (a marca e limpa, sem alerta);
+    - snapshot: recorte novo (ativo) + linhas que nao estao mais na fonte, com a marca.
+    """
+    a = com_marca(antigo).set_index("chave")
+    n = com_marca(novo).set_index("chave")
+    n[COL_REMOVIDA] = ""
+    rem_ant = a[COL_REMOVIDA] != ""
     novos = n.loc[n.index.difference(a.index)].reset_index()
-    removidos = a.loc[a.index.difference(n.index)].reset_index()
+    fora = a.index.difference(n.index)
+    resto = a.loc[fora].copy()
+    sumiu = ~rem_ant.loc[fora].to_numpy()
+    removidos = resto[sumiu].reset_index()
+    resto.loc[sumiu, COL_REMOVIDA] = data_remocao
     comuns = n.index.intersection(a.index)
     va, vn = a.loc[comuns, valores], n.loc[comuns, valores]
     mudou = (((va - vn).abs() > 1e-6) | (va.isna() != vn.isna())).any(axis=1)
@@ -680,7 +723,56 @@ def comparar(antigo: pd.DataFrame, novo: pd.DataFrame, valores: list[str]):
     alterados = n.loc[idx].copy()
     for c in valores:
         alterados[c + "_anterior"] = va.loc[idx, c]
-    return novos, alterados.reset_index(), removidos
+    voltaram = n.loc[comuns[rem_ant.loc[comuns].to_numpy() & ~mudou.to_numpy()]].reset_index()
+    snap = ordenar_snapshot(pd.concat([n, resto]).rename_axis("chave").reset_index())
+    return novos, alterados.reset_index(), removidos, voltaram, snap
+
+
+def queda_suspeita(n_ativas: int, n_novo: int, n_removidas: int) -> str | None:
+    """Guarda contra falha da fonte (ex.: a ANEEL publica um arquivo pela metade).
+
+    Com o snapshot cumulativo, a base de comparacao sao as linhas ATIVAS do snapshot (as ja removidas da fonte
+    nao contam). Bloqueia a gravacao quando, numa mesma coleta:
+      (a) o recorte novo tem menos de 80% das linhas ativas (queda de tamanho > QUEDA_MAX), ou
+      (b) somem da fonte mais de 20% das linhas ativas, mesmo que linhas novas compensem o tamanho.
+    Remocoes com menos de REMOCAO_MIN_BLOQUEIO linhas nunca bloqueiam (series pequenas, retificacoes pontuais).
+    Remocoes moderadas (ex.: 24/11/2026, a ANEEL tirou 8% da B3 e 10% do Grupo A) passam: as linhas ficam no
+    snapshot marcadas e vao para o log como removida_na_fonte. Retorna o motivo do bloqueio ou None.
+    """
+    if n_ativas <= 0 or n_removidas < REMOCAO_MIN_BLOQUEIO:
+        return None
+    if n_novo < (1 - QUEDA_MAX) * n_ativas:
+        return (f"recorte com {n_novo} linhas contra {n_ativas} linhas ativas no snapshot "
+                f"(queda > {QUEDA_MAX:.0%})")
+    if n_removidas > QUEDA_MAX * n_ativas:
+        return f"{n_removidas} das {n_ativas} linhas ativas do snapshot sumiram da fonte (> {QUEDA_MAX:.0%})"
+    return None
+
+
+def sem_substituidas(df: pd.DataFrame, grupo: list[str]) -> pd.DataFrame:
+    """Retificacao: tira as linhas removidas da fonte quando ha linha ATIVA no mesmo grupo (mesma distribuidora e
+    mesmo inicio de vigencia; no Grupo A, tambem subgrupo e modalidade). Removidas sem substituta ficam."""
+    if COL_REMOVIDA not in df.columns or df.empty:
+        return df
+    rem = (df[COL_REMOVIDA].fillna("") != "").to_numpy()
+    if not rem.any():
+        return df
+    idx = pd.MultiIndex.from_frame(df[grupo])
+    return df[~(rem & idx.isin(idx[~rem]))]
+
+
+def resumo_removidas(frames: list[pd.DataFrame | None]) -> list[dict]:
+    """Por data de remocao: vigencias distintas (CNPJ, resolucao, inicio), linhas e anos de inicio."""
+    partes = [f[f[COL_REMOVIDA].fillna("") != ""][["cnpj", "reh", "inicio", COL_REMOVIDA]]
+              for f in frames if f is not None and len(f) and COL_REMOVIDA in f.columns]
+    if not partes:
+        return []
+    r = pd.concat(partes, ignore_index=True)
+    out = []
+    for d, g in r.groupby(COL_REMOVIDA):
+        out.append({"data": d, "vigencias": int(len(g.drop_duplicates(["cnpj", "reh", "inicio"]))),
+                    "linhas": int(len(g)), "ano_min": g["inicio"].min()[:4], "ano_max": g["inicio"].max()[:4]})
+    return sorted(out, key=lambda x: x["data"])
 
 
 # ------------------------------------------------------------------- visao negocio
@@ -701,6 +793,8 @@ def linha_do_tempo(df: pd.DataFrame, col: str, cat: pd.DataFrame | None = None) 
     """
     d = df.copy()
     d["id"] = d["cnpj"].where(d["cnpj"] != "", d["distribuidora"])
+    # snapshot cumulativo: linha ativa prevalece sobre a removida da fonte com o mesmo inicio (retificacao)
+    d = sem_substituidas(d, ["id", "inicio"])
     d = d.sort_values(["id", "inicio", "reh"]).drop_duplicates(["id", "inicio"], keep="last")
     siglas = d.groupby("id")["distribuidora"].last()  # nome mais recente na ANEEL
     nomes = siglas.copy()
@@ -962,6 +1056,7 @@ def montar_visoes(tarifas: pd.DataFrame, fiob: pd.DataFrame, cat: pd.DataFrame |
         "fiob_suspeitos": f_scee[suspeito(f_scee["fiob"])].sort_values(["inicio", "distribuidora"]),
         "metricas": met, "ctx": ctx, "medianas": medianas(met), "indice": indice_nacional(tl_t, ipca, hoje),
         "ipca": ipca, "hoje": hoje, "catalogo": cat,
+        "removidas_fonte": resumo_removidas([tarifas, fiob, tarifas_a, fiob_a]),
         "ga": visoes_grupo_a(tarifas_a, fiob_a, tl_t, met, cat, hoje, subgrupos_a or []),
     }
 
@@ -988,8 +1083,10 @@ def _codigos_a(df: pd.DataFrame) -> pd.DataFrame:
     d["unid"] = d["unidade"].str.replace("R$/", "", regex=False).str.strip()
     d["cod"] = [COMP_A.get(m, {}).get((p, u)) for m, p, u in zip(d["modalidade"], d["posto"], d["unid"])]
     d = d[d["cod"].notna()]
-    # uma resolucao por vigencia (mesmo criterio da B3: em retificacoes com o mesmo inicio, a ultima em ordem)
     g = ["id", "subgrupo", "modalidade", "inicio"]
+    # snapshot cumulativo: linha ativa prevalece sobre a removida da fonte com o mesmo inicio (retificacao)
+    d = sem_substituidas(d, g)
+    # uma resolucao por vigencia (mesmo criterio da B3: em retificacoes com o mesmo inicio, a ultima em ordem)
     return d[d["reh"] == d.groupby(g)["reh"].transform("max")]
 
 
@@ -1340,16 +1437,22 @@ def montar_alerta(visoes: dict, mudancas: dict, cfg: dict, agora: datetime) -> s
     return "\n".join(linhas) + "\n"
 
 
-def registrar_log(caminho: Path, serie: str, novos, alterados, removidos, valores, agora) -> int:
+TIPO_REMOVIDA = "removida_na_fonte"   # sumiu da base da ANEEL; continua no snapshot e no painel
+TIPO_VOLTOU = "voltou_na_fonte"       # estava marcada como removida e reapareceu com o mesmo valor
+
+
+def registrar_log(caminho: Path, serie: str, novos, alterados, removidos, valores, agora, voltaram=None) -> int:
     def total(df, sufixo=""):
         cols = [c + sufixo for c in valores]
         return df[cols].sum(axis=1, min_count=1) if len(df) else pd.Series(dtype=float)
 
+    voltaram = voltaram if voltaram is not None else pd.DataFrame()
     partes = []
     for tipo, df, ant, novo in [
         ("nova", novos, None, total(novos)),
         ("alterada", alterados, total(alterados, "_anterior"), total(alterados)),
-        ("removida", removidos, total(removidos), None),
+        (TIPO_REMOVIDA, removidos, total(removidos), None),
+        (TIPO_VOLTOU, voltaram, None, total(voltaram)),
     ]:
         if df.empty:
             continue
@@ -1383,6 +1486,14 @@ def textos_metodologia(visoes: dict, cfg: dict) -> list[str]:
         "Atualizacao diaria (coleta agendada no PC); cada arquivo so e baixado de novo quando a ANEEL o atualiza.",
         "Recorte: subgrupo B3, modalidade Convencional, base Tarifa de Aplicacao, valores em R$/MWh.",
         "Linha considerada: classe, subclasse, posto e acessante = 'Nao se aplica'.",
+        "Historico cumulativo: o painel guarda tudo o que ja foi coletado. Quando a ANEEL tira linhas da base, elas "
+        "ficam no snapshot com a data em que sumiram (coluna removida_fonte_em) e continuam no historico, nas "
+        "matrizes, nas linhas do tempo e nos graficos; vao para o log como removida_na_fonte, sem alerta. Se voltarem "
+        "a base, a marca e limpa. Retificacao: com uma vigencia ativa e uma removida para a mesma distribuidora e o "
+        "mesmo inicio (Grupo A: tambem subgrupo e modalidade), vale a ativa, tambem na vigencia atual.",
+        "Guarda contra falha da fonte: a coleta nao grava nada se o recorte novo tiver menos de 80% das linhas ativas "
+        f"do snapshot ou se mais de 20% das linhas ativas sumirem de uma vez (remocoes com menos de "
+        f"{REMOCAO_MIN_BLOQUEIO} linhas nunca bloqueiam).",
         "",
         "B3 total (TUSD+TE): historico completo, desde 2010.",
         f"Fio B SCEE: TUSD_FioB com detalhe SCEE (energia compensada, Lei 14.300), so vigencias iniciadas "
@@ -1709,6 +1820,16 @@ def avisos_qualidade(visoes: dict, cfg: dict, estado: dict) -> list[str]:
             itens = sorted({f"{r.distribuidora} ({r.subgrupo} {r.modalidade})" for r in sem.itertuples()})
             avisos.append(f"Grupo A: {len(itens)} combinacao(oes) ativa(s) sem TUSD Fio B desde "
                           f"{cfg['fiob_ano_inicial']} (sem valor do kWh compensado): " + ", ".join(itens) + ".")
+    hoje = visoes.get("hoje") or datetime.now(FUSO_BR).date()
+    lim = (hoje - timedelta(days=DIAS_AVISO_REMOCAO)).isoformat()
+    for r in visoes.get("removidas_fonte") or []:
+        if r["data"] < lim:
+            continue
+        anos = r["ano_min"] if r["ano_min"] == r["ano_max"] else f"{r['ano_min']} a {r['ano_max']}"
+        avisos.append(f"A ANEEL removeu da base {br(r['vigencias'], 0)} vigências antigas em {data_br(r['data'])} "
+                      f"(inícios de {anos}; {br(r['linhas'], 0)} linhas de B3, Fio B e Grupo A); mantidas no "
+                      "histórico do painel. Onde a ANEEL publicou retificação com o mesmo início, vale a vigência "
+                      f"ativa. Detalhe no log (tipo {TIPO_REMOVIDA}).")
     if not ((visoes.get("ipca") or {}).get("mensal")) and not any(a.startswith("IPCA") for a in avisos):
         avisos.append("IPCA indisponivel (sem cache em data/ipca_bcb.json): comparacoes com a inflacao ficam vazias.")
     return avisos
@@ -2219,7 +2340,9 @@ def dados_html(visoes: dict, log_path: Path, cfg: dict, agora: datetime, estado:
             for r in g.sort_values("inicio", ascending=False).itertuples()]
 
     rotulos = rotulos_por_cnpj(visoes)
-    log = ler_log(log_path).iloc[::-1].head(50)
+    log = ler_log(log_path)
+    # remocoes da fonte (podem ser milhares numa coleta) ficam no aviso de qualidade e no Excel, nao nas 50 ultimas
+    log = log[log["tipo"] != TIPO_REMOVIDA].iloc[::-1].head(50)
     def det_log(r) -> str:
         # Grupo A: o que distingue a linha e o posto e a unidade (ex.: "Ponta, kW"); detalhe so quando nao e o normal
         if not str(r.get("serie", "")).startswith(("Grupo A", "Fio B Grupo A")):
@@ -3761,6 +3884,115 @@ def canonicas(serie: str, df: pd.DataFrame) -> pd.DataFrame:
     return _canon_a(df[df["detalhe"] == NA])
 
 
+def processar_serie(serie: str, antigo: pd.DataFrame, novo: pd.DataFrame, cfg: dict, esc_ant: dict,
+                    log_path: Path | None, agora: datetime, aceitar_queda: bool = False) -> dict:
+    """Compara uma serie com o snapshot cumulativo, aplica a guarda de queda e grava o log (se log_path; o main
+    passa None e grava o log de todas as series so depois que nenhuma guarda bloqueou).
+
+    Retorna {"snapshot", "mudancas" (para o alerta: so novas e alteradas), "n_log", "fora", "salvar",
+    "novos", "alterados", "removidos", "voltaram"}. Remocoes da fonte nao entram no alerta nem na contagem
+    de "linhas que mudaram"; vao para o log como removida_na_fonte e ficam no snapshot.
+    """
+    cfg_s = SERIES[serie]
+    valores = cfg_s["valores"]
+    antigo = com_marca(antigo)
+    fora = 0
+    if serie != "tarifa":
+        # Fio B: vigencias anteriores a fiob_ano_inicial saem do escopo sem virar "removidas" (ex.: snapshot da
+        # versao com historico completo do Fio B). Grupo A: idem para subgrupos tirados do config.json.
+        n0 = len(antigo)
+        antigo = adicionar_chave(escopo_serie(serie, antigo, cfg))
+        fora = n0 - len(antigo)
+        if fora:
+            print(f"  {cfg_s['rotulo']}: {fora} linhas do snapshot fora do escopo do config.json (sem alerta)")
+    if cfg_s.get("grupo_a"):
+        # Escopo anterior do Grupo A (estado.json): linhas que so entram porque o config.json ampliou o escopo
+        # (subgrupo novo, ano inicial menor) viram linha de base, sem alerta.
+        ini_ant = esc_ant["fiob_inicio_min" if serie == "fiob_a" else "inicio_min"]
+        amplia = novo[~novo["subgrupo"].isin(esc_ant["subgrupos"]) | (novo["inicio"] < ini_ant)]
+        amplia = amplia[~amplia["chave"].isin(antigo["chave"])]
+        if len(amplia):
+            antigo = com_marca(pd.concat([antigo, amplia], ignore_index=True))
+            fora += len(amplia)
+            print(f"  {cfg_s['rotulo']}: {len(amplia)} linhas entram por ampliacao do escopo "
+                  "(linha de base, sem alerta)")
+    n_ativas = len(ativas(antigo))
+    novos, alterados, removidos, voltaram, snap = comparar(antigo, novo, valores, agora.strftime("%Y-%m-%d"))
+    motivo = queda_suspeita(n_ativas, len(novo), len(removidos))
+    if motivo:
+        if not aceitar_queda:
+            raise RuntimeError(f"{cfg_s['rotulo']}: {motivo}. Provavel arquivo incompleto na ANEEL; nada foi salvo. "
+                               "Se a remocao for legitima, rode com --aceitar-queda.")
+        print(f"  [aviso] {cfg_s['rotulo']}: {motivo}; aceito por --aceitar-queda")
+    n_log = len(novos) + len(alterados) + len(removidos) + len(voltaram)
+    if log_path is not None:
+        registrar_log(log_path, serie, novos, alterados, removidos, valores, agora, voltaram)
+    print(f"  {cfg_s['rotulo']}: {len(novos)} novas, {len(alterados)} alteradas, {len(removidos)} removidas da fonte "
+          f"(mantidas no historico), {len(voltaram)} voltaram a fonte; {n_ativas} ativas antes, {len(novo)} agora")
+    chaves = list(novos["chave"]) + list(alterados["chave"])
+    mud = novo[novo["chave"].isin(chaves)]
+    canon = canonicas(serie, mud)
+    antes = {}
+    if len(alterados):
+        ant = alterados[[c + "_anterior" for c in valores]].sum(axis=1, min_count=1)
+        antes = dict(zip(alterados["chave"], ant))
+    mud_s = {"chaves": chaves, "antes": antes, "outras": max(len(chaves) - len(canon), 0)}
+    if cfg_s.get("grupo_a"):
+        # vigencias (distribuidora, subgrupo, modalidade, inicio) com mudanca, para a secao Grupo A do alerta
+        grupos = lambda d: set(zip(_id(d), d["subgrupo"], d["modalidade"], d["inicio"]))  # noqa: E731
+        mud_s["grupos"] = grupos(canon if serie == "tarifa_a" else _canon_a(mud))
+        mud_s["antes_grupos"] = grupos(canon[canon["chave"].isin(list(antes))])
+    return {"snapshot": snap, "mudancas": mud_s, "n_log": n_log, "fora": fora, "salvar": bool(n_log or fora),
+            "novos": novos, "alterados": alterados, "removidos": removidos, "voltaram": voltaram}
+
+
+def _snapshot_git(base: Path, ref: str, arquivo: str, valores: list[str]) -> pd.DataFrame | None:
+    """Snapshot data/<arquivo> numa versao do git (None se o arquivo nao existia nela)."""
+    import io
+    import subprocess
+    r = subprocess.run(["git", "show", f"{ref}:data/{arquivo}"], cwd=base, capture_output=True, timeout=120)
+    if r.returncode != 0:
+        return None
+    df = pd.read_csv(io.BytesIO(r.stdout), dtype=str, keep_default_na=False, encoding="utf-8")
+    for c in valores:
+        df[c] = pd.to_numeric(df[c], errors="coerce").round(6)
+    return adicionar_chave(com_marca(df))
+
+
+def migrar_historico(base: Path, cfg: dict, ref: str, data_remocao: str) -> int:
+    """Migracao unica: reinsere no snapshot as linhas que estavam na versao `ref` do git (ex.: 7fe4a35^) e nao
+    estao no snapshot atual, marcadas com removida_fonte_em = data_remocao, e troca no log o tipo antigo
+    "removida" por "removida_na_fonte". Idempotente (rodar de novo nao reinsere nada)."""
+    dados = base / "data"
+    print(f"Migracao do historico: snapshots de {ref}, removida_fonte_em = {data_remocao}")
+    for serie, cfg_s in SERIES.items():
+        caminho = dados / cfg_s["arquivo"]
+        atual = carregar(caminho, cfg_s["valores"])
+        velho = _snapshot_git(base, ref, cfg_s["arquivo"], cfg_s["valores"])
+        if atual is None or velho is None:
+            print(f"  {cfg_s['rotulo']}: sem snapshot atual ou em {ref}; nada a fazer")
+            continue
+        if serie != "tarifa":
+            velho = escopo_serie(serie, velho, cfg)
+        falta = velho[~velho["chave"].isin(atual["chave"])].copy()
+        falta[COL_REMOVIDA] = falta[COL_REMOVIDA].where(falta[COL_REMOVIDA] != "", data_remocao)
+        print(f"  {cfg_s['rotulo']}: {len(falta)} linhas reinseridas (snapshot {len(atual)} -> "
+              f"{len(atual) + len(falta)}; anos de inicio: "
+              + (", ".join(f"{a}: {n}" for a, n in falta["inicio"].str[:4].value_counts().sort_index().items())
+                 or "-") + ")")
+        if len(falta) or COL_REMOVIDA not in pd.read_csv(caminho, nrows=0).columns:
+            salvar(ordenar_snapshot(pd.concat([atual, falta], ignore_index=True)), caminho, cfg_s["valores"])
+    log_path = dados / "log_mudancas.csv"
+    if log_path.exists():
+        log = pd.read_csv(log_path, dtype=str, keep_default_na=False, encoding="utf-8")
+        m = log["tipo"] == "removida"
+        if m.any():
+            log.loc[m, "tipo"] = TIPO_REMOVIDA
+            log.to_csv(log_path, index=False, encoding="utf-8")
+        print(f"  log: {int(m.sum())} linhas 'removida' -> '{TIPO_REMOVIDA}'")
+    return 0
+
+
 def so_painel(base: Path, cfg: dict, agora: datetime) -> int:
     """Regera Excel e HTML a partir dos CSVs salvos (offline). Nao toca snapshot, log, estado nem alerta."""
     dados = base / "data"
@@ -3792,12 +4024,23 @@ def main() -> int:
                     help="regera Excel e HTML a partir dos CSVs de data/, sem rede e sem alterar snapshot/log/estado")
     ap.add_argument("--so-ipca", action="store_true",
                     help="so atualiza o cache do IPCA (data/ipca_bcb.json), sem tocar no resto")
+    ap.add_argument("--aceitar-queda", action="store_true",
+                    help="grava mesmo se a guarda de queda bloquear (remocao grande e legitima na ANEEL)")
+    ap.add_argument("--migrar-historico", metavar="REF",
+                    help="migracao unica: reinsere no snapshot as linhas da versao REF do git (ex.: 7fe4a35^) que "
+                         "sumiram, marcadas com removida_fonte_em = --data-remocao, e corrige o tipo no log")
+    ap.add_argument("--data-remocao", metavar="AAAA-MM-DD",
+                    help="data da marca removida_fonte_em na migracao (padrao: hoje)")
     args = ap.parse_args()
+    global ACEITAR_QUEDA
+    ACEITAR_QUEDA = args.aceitar_queda
 
     base: Path = args.dir.resolve()
     dados = base / "data"
     cfg = ler_config(base)
     agora = datetime.now(FUSO_BR)
+    if args.migrar_historico:
+        return migrar_historico(base, cfg, args.migrar_historico, args.data_remocao or agora.strftime("%Y-%m-%d"))
     if args.so_painel:
         return so_painel(base, cfg, agora)
     if args.so_ipca:
@@ -3901,12 +4144,14 @@ def main() -> int:
     ipca, ipca_mudou = atualizar_ipca(dados, agora.date(), avisos_fonte)
     catalogo = ler_distribuidoras(base)
 
-    # ---- compara com o snapshot
-    # Escopo anterior do Grupo A (estado.json): linhas que so entram porque o config.json ampliou o escopo
-    # (subgrupo novo, ano inicial menor) viram linha de base, sem alerta.
+    # ---- compara com o snapshot cumulativo (linhas que somem da fonte ficam, marcadas com removida_fonte_em)
+    # Primeiro compara as 4 series e aplica as guardas; so depois grava log e snapshots (nada e salvo se uma
+    # guarda bloquear).
     esc_ant = estado_ant.get("escopo_grupo_a") or esc_a
     mudancas, houve_mudanca, primeira_vez = {}, False, False
     log_path = dados / "log_mudancas.csv"
+    snaps = {s: com_marca(serie_vazia(c["valores"])) for s, c in SERIES.items()}
+    resultados, base_nova = {}, {}
     for serie, cfg_s in SERIES.items():
         caminho = dados / cfg_s["arquivo"]
         if cfg_s.get("grupo_a") and not subs_a:
@@ -3918,52 +4163,25 @@ def main() -> int:
             primeira_vez = True
             mudancas[serie] = {"chaves": [], "outras": 0}
             print(f"  {cfg_s['rotulo']}: linha de base criada ({len(novo)} linhas, sem alerta)")
-            salvar(novo, caminho, cfg_s["valores"])
+            base_nova[serie] = snaps[serie] = com_marca(novo)
             continue
-        fora = 0
-        if serie != "tarifa":
-            # Fio B: vigencias anteriores a fiob_ano_inicial saem do escopo sem virar "removidas" (ex.: snapshot da
-            # versao com historico completo do Fio B). Grupo A: idem para subgrupos tirados do config.json.
-            n0 = len(antigo)
-            antigo = adicionar_chave(escopo_serie(serie, antigo, cfg))
-            fora = n0 - len(antigo)
-            if fora:
-                print(f"  {cfg_s['rotulo']}: {fora} linhas do snapshot fora do escopo do config.json (sem alerta)")
-        if cfg_s.get("grupo_a"):
-            ini_ant = esc_ant["fiob_inicio_min" if serie == "fiob_a" else "inicio_min"]
-            amplia = novo[~novo["subgrupo"].isin(esc_ant["subgrupos"]) | (novo["inicio"] < ini_ant)]
-            amplia = amplia[~amplia["chave"].isin(antigo["chave"])]
-            if len(amplia):
-                antigo = pd.concat([antigo, amplia], ignore_index=True)
-                fora += len(amplia)
-                print(f"  {cfg_s['rotulo']}: {len(amplia)} linhas entram por ampliacao do escopo "
-                      "(linha de base, sem alerta)")
-        if len(novo) < 0.8 * len(antigo):
-            raise RuntimeError(f"{cfg_s['rotulo']}: recorte com {len(novo)} linhas contra {len(antigo)} "
-                               "no snapshot (queda > 20%). Provavel arquivo incompleto; nada foi salvo.")
-        novos, alterados, removidos = comparar(antigo, novo, cfg_s["valores"])
-        n_log = registrar_log(log_path, serie, novos, alterados, removidos, cfg_s["valores"], agora)
-        print(f"  {cfg_s['rotulo']}: {len(novos)} novas, {len(alterados)} alteradas, {len(removidos)} removidas")
-        chaves = list(novos["chave"]) + list(alterados["chave"])
-        mud = novo[novo["chave"].isin(chaves)]
-        canon = canonicas(serie, mud)
-        antes = {}
-        if len(alterados):
-            ant = alterados[[c + "_anterior" for c in cfg_s["valores"]]].sum(axis=1, min_count=1)
-            antes = dict(zip(alterados["chave"], ant))
-        mudancas[serie] = {"chaves": chaves, "antes": antes,
-                           "outras": max(len(chaves) - len(canon), 0) + len(removidos)}
-        if cfg_s.get("grupo_a"):
-            # vigencias (distribuidora, subgrupo, modalidade, inicio) com mudanca, para a secao Grupo A do alerta
-            grupos = lambda d: set(zip(_id(d), d["subgrupo"], d["modalidade"], d["inicio"]))  # noqa: E731
-            mudancas[serie]["grupos"] = grupos(canon if serie == "tarifa_a" else _canon_a(mud))
-            mudancas[serie]["antes_grupos"] = grupos(canon[canon["chave"].isin(list(antes))])
-        if n_log:
+        r = processar_serie(serie, antigo, novo, cfg, esc_ant, None, agora, args.aceitar_queda)
+        resultados[serie] = r
+        mudancas[serie] = r["mudancas"]
+        snaps[serie] = r["snapshot"]
+    for serie, df in base_nova.items():
+        salvar(df, dados / SERIES[serie]["arquivo"], SERIES[serie]["valores"])
+    for serie, r in resultados.items():
+        registrar_log(log_path, serie, r["novos"], r["alterados"], r["removidos"], SERIES[serie]["valores"], agora,
+                      r["voltaram"])
+        if r["n_log"]:
             houve_mudanca = True
-        if n_log or fora:
-            salvar(novo, caminho, cfg_s["valores"])
+        if r["salvar"]:
+            salvar(r["snapshot"], dados / SERIES[serie]["arquivo"], SERIES[serie]["valores"])
 
-    visoes = montar_visoes(tarifas, fiob, catalogo, ipca, agora.date(), tarifas_a, fiob_a, subs_a)
+    # O painel usa o snapshot cumulativo (fonte atual + historico que a ANEEL tirou da base)
+    visoes = montar_visoes(snaps["tarifa"], snaps["fiob"], catalogo, ipca, agora.date(), snaps["tarifa_a"],
+                           snaps["fiob_a"], subs_a)
     # Assinatura do que o painel mostra como "atual" (vigencia vigente de cada distribuidora e calendario):
     # muda quando uma vigencia comeca ou termina, ou quando o catalogo de nomes muda; forca regerar o painel.
     met = visoes["metricas"]
@@ -3985,6 +4203,10 @@ def main() -> int:
         "escopo_grupo_a": esc_a,
         "linhas": {"tarifa_b3": len(tarifas), "fiob_b3": len(fiob), "tarifa_grupo_a": len(tarifas_a),
                    "fiob_grupo_a": len(fiob_a)},
+        # linhas que a ANEEL tirou da base e o snapshot cumulativo guarda (removida_fonte_em preenchida)
+        "linhas_removidas_fonte": {n: int(len(snaps[s]) - len(ativas(snaps[s]))) for s, n in
+                                   (("tarifa", "tarifa_b3"), ("fiob", "fiob_b3"), ("tarifa_a", "tarifa_grupo_a"),
+                                    ("fiob_a", "fiob_grupo_a"))},
         "linhas_fiob_por_ano_vigencia": {str(a): int(n) for a, n in por_ano.items()},
         "distribuidoras_grupo_a": {f"{s} {m}": int(n) for (s, m), n in
                                    tarifas_a.groupby(["subgrupo", "modalidade"])["cnpj"].nunique().items()},

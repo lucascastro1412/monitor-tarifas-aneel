@@ -30,11 +30,14 @@ A ANEEL ainda usa siglas antigas (ex.: ELETROPAULO para a Enel SP). O arquivo `d
    - regera `Painel_Tarifas_ANEEL.xlsx` e `Painel_Tarifas_ANEEL.html` (antes `Painel_Tarifas_B3.*`) e salva no repositório;
    - grava o alerta em `alerta.md` (local, fora do git) e em `data/alertas/<AAAA-MM-DD_HHMM>.md` (entra no commit); no push, o workflow abre uma **Issue** no GitHub com a tabela de mudanças (TUSD, TE, total, variação %, Fio B e Fio B efetivo) e a seção "Grupo A": uma linha por distribuidora, subgrupo e modalidade, com energia fora ponta, energia ponta e demanda e a variação de cada uma contra a vigência anterior. O GitHub manda a Issue por e-mail.
    - O log grava a série do Grupo A como `Grupo A TUSD+TE A4 Verde`, `Fio B Grupo A A3 Azul` etc.
+   - **Histórico cumulativo.** O snapshot guarda tudo o que já foi coletado. Quando a ANEEL tira linhas da base (em 24/11/2026 ela apagou 220 linhas antigas da B3 e 1.482 do Grupo A), elas **não** saem do snapshot: recebem `removida_fonte_em = AAAA-MM-DD` (coluna vazia nas linhas ativas) e continuam valendo no histórico, nas matrizes, nas linhas do tempo e nos gráficos. Remoções não abrem Issue e não entram na contagem de "linhas que mudaram"; vão para o log com tipo `removida_na_fonte` e o painel mostra um aviso resumido ("A ANEEL removeu da base N vigências antigas em DD/MM/AAAA; mantidas no histórico do painel"). Se a linha voltar à fonte, a marca é limpa sem alerta (log `voltou_na_fonte`); se voltar com outro valor, conta como alterada.
+   - **Retificação.** Se a ANEEL troca uma vigência por outra (mesma distribuidora e mesmo início, outra REH, ou a mesma REH com outro fim ou valor), a substituída sai por remoção e a nova entra como nova. Quando há uma linha ativa e uma removida para a mesma distribuidora e o mesmo início (no Grupo A, também subgrupo e modalidade), vale a ativa: na linha do tempo, nas matrizes e na vigência atual. Removidas sem substituta (histórico antigo) continuam valendo. Vale para as 4 séries; no Fio B continua o corte de `fiob_ano_inicial`.
 5. IPCA: cache em `data/ipca_bcb.json`, baixado de novo só quando o mês muda (enquanto o IPCA do mês anterior não sai, no máximo 1 tentativa por dia). Timeout de 90 s, 3 tentativas. Se a API do Banco Central falhar, usa o cache e avisa no painel; sem cache, as comparações com a inflação ficam vazias e a execução segue.
 6. O painel também é regerado quando a vigência atual de alguma distribuidora muda (uma vigência começa ou termina), quando o calendário de reajustes muda ou quando chega IPCA novo, mesmo sem mudança na base.
 7. Falhas:
    - download ou leitura de um Parquet falhou (ou recorte novo com queda > 20%): usa o recorte salvo, avisa no log e no painel (`estado.json`, `avisos_fonte`) e segue;
-   - sem recorte salvo, recorte B3 vazio ou snapshot com queda > 20%: nada é sobrescrito, a execução falha e o GitHub avisa por e-mail.
+   - sem recorte salvo ou recorte B3 vazio: nada é sobrescrito e a execução falha;
+   - **guarda de queda do snapshot** (por série): compara o recorte novo com as linhas **ativas** do snapshot (as já removidas da fonte não contam). Bloqueia, sem gravar nada, se (a) o recorte novo tiver menos de 80% das linhas ativas ou (b) mais de 20% das linhas ativas sumirem de uma vez, mesmo com linhas novas compensando o tamanho. Remoções com menos de 50 linhas nunca bloqueiam. Assim, uma falha da ANEEL (arquivo pela metade) para a coleta, e uma limpeza moderada da base (como a de 24/11/2026: 8% da B3, 10% do Grupo A) passa e fica no histórico. Se uma remoção grande for legítima, rode uma vez `python monitor_tarifas.py --aceitar-queda` (vale também para a guarda do recorte).
 
 **Impostos e calculadora GD (`impostos_distribuidoras.csv`, `icms_gd_distribuidoras.csv`, `referencia_planilha_tarifas.csv`)**
 
@@ -45,7 +48,7 @@ Três CSVs versionados (ponto e vírgula; o leitor aceita decimal com vírgula o
 
 Regra (igual à planilha, gross-up em cascata): D = TUSD, E = TE, i = ICMS, pc = PIS + COFINS; k_PC = 1/(1-pc); k_full = 1/((1-i)(1-pc)); U = D + E; V = U·k_full; W = (D - FB_ef)·k_TUSD + E·k_TE (k = k_full se o ICMS da parcela entra no benefício, senão k_PC); Y = W - (U - FB_ef); X = s·Y; Z = (U - FB_ef) + X; deságio implícito = 1 - preço/W. GD I: FB_ef = 0 (reproduz a planilha 1:1). GD II/III: FB_ef = Fio B SCEE × % do ano da Lei 14.300 (2026 60%, 2027 75%, 2028 90%). GD III ainda paga 40% do Fio A, TFSEE e P&D/EE, o que não está modelado (aviso na calculadora).
 
-Teste de regressão: `py tests/test_calculadora.py [Tarifas.xlsx]` (casos CPFL Paulista e Cemig; com a planilha, confere as 48 linhas contra o cache dela).
+Teste de regressão: `py tests/test_calculadora.py [Tarifas.xlsx]` (casos CPFL Paulista e Cemig; com a planilha, confere as 48 linhas contra o cache dela). Histórico cumulativo: `py tests/test_historico.py` (linha removida que fica, linha que volta, retificação, remoção sem alerta e guarda de queda).
 
 **Por que ler o Parquet de anos anteriores no Fio B**
 
@@ -65,7 +68,7 @@ O arquivo anual de componentes é organizado pelo processo tarifário, não pelo
 | Rankings | Ranking (gráfico e tabela completa) por valor do kWh compensado, % da tarifa, B3 total, tarifa B3 com impostos (V), valor compensado com tributos (W, GD II), Fio B, Fio B / TUSD, último reajuste, acumulado e aumento real; matriz distribuidora x ano com heatmap |
 | Regiões | Medianas por região e por UF (B3, valor compensado, Fio B, efetivo, acumulado, aumento real), em barras e mapa de calor |
 | Calendário | Vigências que terminam nos próximos 90 dias, com a tarifa atual e a nova homologação, se já publicada |
-| Mudanças / Metodologia | Log do agente e regras de cálculo |
+| Mudanças / Metodologia | Log do agente (as 50 últimas novas e alteradas; as remoções da fonte ficam no aviso de qualidade e no Excel) e regras de cálculo, incluindo o histórico cumulativo |
 | `Painel_Tarifas_ANEEL.xlsx` | Abas abaixo (nome comercial nas matrizes) |
 | Leia-me | Metodologia, avisos de qualidade e data da última atualização |
 | Comparativo | Uma linha por distribuidora com tudo do comparador (vigência, TUSD, TE, total, Fio B, efetivo, valor compensado, reajustes, acumulados, CAGR, rankings, diferença contra a mediana) |
@@ -123,6 +126,10 @@ python monitor_tarifas.py --forcar-painel   # regera Excel e HTML mesmo sem muda
 python monitor_tarifas.py --so-painel       # offline: regera Excel e HTML a partir de data/, sem rede e sem alterar snapshot, log ou estado
 python monitor_tarifas.py --so-ipca         # só atualiza o cache do IPCA (data/ipca_bcb.json)
 python monitor_tarifas.py --dir <pasta>     # usa outra pasta base (data/, config.json, painéis), útil para testes
+python monitor_tarifas.py --aceitar-queda   # grava mesmo se a guarda de queda bloquear (remoção grande e legítima)
+python monitor_tarifas.py --migrar-historico 7fe4a35^ --data-remocao 2026-11-24
+                                            # migração única (já aplicada): reinsere no snapshot as linhas daquela versão
+                                            # do git que sumiram, marcadas como removidas, e corrige o tipo no log
 ```
 
 Tempos medidos em 03/11/2026: primeira execução 57 s e 109,6 MB baixados (B3 2,6 MB + Fio B 2024, 2025 e 2026); execução com cache válido 6 s, sem download.
