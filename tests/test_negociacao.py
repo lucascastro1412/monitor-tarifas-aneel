@@ -203,6 +203,63 @@ def test_projecao_preco_fixo():
     assert all(a["d"] == 0.3 for a in pd_["anos"])
 
 
+# ---------------------------------------------------------------- faixa de negociacao (Abertura, Alvo, Limite)
+
+def _cpfl_gd1_preco(preco_kwh, s=0.0, c=0.20):
+    """CPFL Paulista GD I configurada por preco ao dono (R$/kWh), VB do dono s, desconto ao cliente c."""
+    r0 = mt.calc_arrendamento(**CPFL, s=s, d=0.0, c=c)
+    return mt.calc_arrendamento(**CPFL, s=s, d=mt.desagio_por_preco(r0, preco_kwh), c=c)
+
+
+def test_faixa_alvo_acima_do_limite():
+    # caso real: pedido R$ 0,65/kWh, VB 0%, desconto 20%, margem minima 20% do valor compensado
+    r = _cpfl_gd1_preco(0.65)
+    mg = 0.20 * r["W_I"]
+    f = mt.faixa_negociacao(r, mg)
+    ab, al, li = f["abertura"], f["alvo"], f["limite"]
+    assert f["acima_limite"] and al["margem"] < mg
+    assert ab["preco_kwh"] < li["preco_kwh"] < al["preco_kwh"]  # faixa nao inverte
+    assert ab["margem"] >= mg - 1e-9 and li["margem"] >= mg - 1e-9
+    assert abs(ab["d"] - min(1.0, li["d"] + mt.NEG_ABERTURA_PP)) < 1e-12  # abertura parte do limite
+    assert f["ordem"] == ["abertura", "limite", "alvo"] and "acima do limite" in f["rotulos"]["alvo"]
+    e = f["excesso"]
+    assert abs(e["mwh"] - (al["dono"] - li["dono"])) < 1e-9 and abs(e["kwh"] - e["mwh"] / 1000) < 1e-12
+    assert abs(e["pp"] - (li["d"] - al["d"]) * 100) < 1e-9 and e["mwh"] > 0
+    # resolvendo o VB: VB maximo abaixo do atual, abertura com VB do limite e deságio + 10 p.p.
+    r2 = _cpfl_gd1_preco(0.65, s=0.5)
+    f2 = mt.faixa_negociacao(r2, 0.20 * r2["W_I"], var="s")
+    if f2["acima_limite"]:
+        assert f2["abertura"]["preco_kwh"] <= f2["limite"]["preco_kwh"] < f2["alvo"]["preco_kwh"]
+
+
+def test_faixa_alvo_dentro_do_limite():
+    for preco in (0.40, 0.45, 0.50):
+        r = _cpfl_gd1_preco(preco)
+        mg = 0.20 * r["W_I"]
+        f = mt.faixa_negociacao(r, mg)
+        ab, al, li = f["abertura"], f["alvo"], f["limite"]
+        assert not f["acima_limite"] and f["excesso"] is None
+        assert ab["preco_kwh"] <= al["preco_kwh"] <= li["preco_kwh"], preco
+        assert abs(ab["d"] - min(1.0, al["d"] + mt.NEG_ABERTURA_PP)) < 1e-12  # regra antiga mantida
+        assert f["ordem"] == ["abertura", "alvo", "limite"] and f["rotulos"]["alvo"] == "Alvo"
+    # deságio alto: abertura limitada a 100%, nunca acima do alvo em preco
+    r = mt.calc_arrendamento(**CPFL, s=0.0, d=0.95, c=0.2)
+    f = mt.faixa_negociacao(r, 0.20 * r["W_I"])
+    assert f["abertura"]["d"] == 1.0 and f["abertura"]["preco_kwh"] <= f["alvo"]["preco_kwh"]
+
+
+def test_faixa_desagio_minimo_igual_ao_limite():
+    r = _cpfl_gd1_preco(0.65)
+    mg = 0.20 * r["W_I"]
+    f = mt.faixa_negociacao(r, mg)
+    exato = mt.resolver_arrendamento(r, "d", margem=mg)["valor"]
+    # o deságio mínimo mostrado e o d da coluna Limite sao o mesmo numero (arredondado para cima a 0,01 p.p.)
+    assert f["valor_limite"] == f["limite"]["d"]
+    assert f"{f['valor_limite'] * 100:.2f}" == f"{f['limite']['d'] * 100:.2f}"
+    assert exato <= f["valor_limite"] < exato + 1e-4 + 1e-12
+    assert abs(f["teto"] - f["limite"]["dono"]) < 1e-12 and f["teto"] <= f["dono_max"] + 1e-9
+
+
 if __name__ == "__main__":
     import inspect
     n = 0

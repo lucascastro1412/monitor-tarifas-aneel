@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -1726,6 +1727,58 @@ def resolver_arrendamento(r: dict, var: str = "d", dono: float | None = None, ma
     return out
 
 
+def _arr_com(r: dict, d: float, s: float) -> dict:
+    """Arrendamento com outro desagio nominal d e/ou VB do dono s, pelas formulas lineares de calc_arrendamento
+    (U, W_I, Y, custo do Fio B e c de r)."""
+    u, w, y, cfb, c = r["U"], r["W_I"], r["Y"], r["custo_fb"], r["c"]
+    dono = (1 - d) * u + s * y - cfb
+    th = d * u + (1 - s) * y
+    v = r.get("V")
+    return {**r, "d": d, "s": s, "dono": dono, "thopen": th, "desconto": c * w, "margem": th - c * w,
+            "desagio_impl": 1 - dono / u if u else None, "preco_kwh": dono / 1000,
+            "desagio_v": 1 - dono / v if v else None, "desagio_wi": 1 - dono / w if w else None}
+
+
+def faixa_negociacao(r: dict, margem: float, var: str = "d", abertura: float = NEG_ABERTURA_PP) -> dict:
+    """Faixa de negociacao (mesma regra da Visao de negociacao do painel), por MWh compensado.
+
+    r = configuracao atual (calc_arrendamento): e o Alvo, ou o pedido do dono. margem = margem liquida minima da
+    Thopen em R$/MWh. Limite = desagio minimo (var "d") ou VB maximo (var "s") da margem minima, arredondado a
+    0,01 p.p. para o lado seguro (d para cima, s para baixo), limitado a 0 a 100%; e o mesmo valor mostrado como
+    desagio minimo (valor_limite). Abertura = desagio + abertura p.p. (limitado a 100%) sobre a base segura: se o
+    Alvo respeita o limite, a base e o Alvo; se passa do limite (margem abaixo da minima), a base e o Limite. Assim
+    o preco da Abertura nunca fica acima do Alvo nem do Limite. Com o Alvo acima do limite, a ordem e Abertura,
+    Limite, Pedido do dono (acima do limite) e excesso traz a diferenca em R$/MWh, R$/kWh e p.p. (de desagio ou
+    de VB); sem solucao (valor fora de 0 a 100%), excesso = None.
+    """
+    p2 = resolver_arrendamento(r, var, margem=margem)
+    lim_d, lim_s = r["d"], r["s"]
+    if p2["valor"] is not None:
+        v = max(0.0, min(1.0, p2["valor"]))
+        if var == "d":
+            lim_d = min(1.0, math.ceil(v * 10000 - 1e-7) / 10000)
+        else:
+            lim_s = max(0.0, math.floor(v * 10000 + 1e-7) / 10000)
+    limite = _arr_com(r, lim_d, lim_s)
+    alvo = _arr_com(r, r["d"], r["s"])
+    acima = alvo["margem"] < margem - 1e-9
+    if var == "d":
+        ab = _arr_com(r, min(1.0, max(r["d"], lim_d) + abertura), r["s"])
+    else:
+        ab = _arr_com(r, min(1.0, r["d"] + abertura), min(r["s"], lim_s))
+    excesso = None
+    if acima and p2["ok"]:
+        dif = alvo["dono"] - limite["dono"]
+        excesso = {"mwh": dif, "kwh": dif / 1000,
+                   "pp": (lim_d - r["d"]) * 100 if var == "d" else (r["s"] - lim_s) * 100}
+    return {"var": var, "ok": p2["ok"], "motivo": p2["motivo"], "valor_limite": lim_d if var == "d" else lim_s,
+            "teto": limite["dono"] if p2["ok"] else p2["dono_max"], "dono_max": p2["dono_max"],
+            "abertura": ab, "alvo": alvo, "limite": limite, "acima_limite": acima, "excesso": excesso,
+            "ordem": ["abertura", "limite", "alvo"] if acima else ["abertura", "alvo", "limite"],
+            "rotulos": {"abertura": "Abertura", "limite": "Limite",
+                        "alvo": "Pedido do dono (acima do limite)" if acima else "Alvo"}}
+
+
 def projecao_arrendamento(tusd: float, te: float, icms: float, pc: float, flag_te: int = 1, flag_tusd: int = 1,
                           s: float = ARR_VB, d: float = ARR_DESAGIO, c: float = ARR_DESCONTO, fiob: float = 0.0,
                           gd: int = 2, fb_com_impostos: bool = True, mwh_mes: float = 1.0, prazo: int = NEG_PRAZO,
@@ -2058,9 +2111,12 @@ def textos_arrendamento() -> list[str]:
         "maximo = 1 - (margem + desconto ao cliente - desagio nominal x tarifa sem impostos) / beneficio fiscal; "
         "pagamento maximo ao dono (teto da negociacao) = valor compensado - custo do Fio B - desconto ao cliente - "
         "margem. Sem solucao quando o valor resolvido sai de 0 a 100%, tarifa sem impostos = 0 (resolver o desagio) "
-        "ou beneficio fiscal = 0 (resolver o VB, que nao muda nada). Faixa de negociacao: Abertura (padrao desagio "
-        "atual + 10 p.p.), Alvo (configuracao atual) e Limite (desagio minimo ou VB maximo da margem minima), editaveis; coluna em vermelho quando a "
-        "margem fica abaixo da minima.",
+        "ou beneficio fiscal = 0 (resolver o VB, que nao muda nada). Faixa de negociacao: Abertura, Alvo (configuracao atual) e "
+        "Limite (desagio minimo ou VB maximo da margem minima, o mesmo valor arredondado a 0,01 p.p. para o lado seguro), "
+        "editaveis; coluna em vermelho quando a margem fica abaixo da minima. Se o Alvo respeita o limite, Abertura = "
+        "desagio atual + 10 p.p. (ordem Abertura, Alvo, Limite); se passa do limite, Abertura = desagio minimo + 10 p.p., "
+        "a ordem vira Abertura, Limite, Pedido do dono (acima do limite) e um aviso mostra quanto o pedido passa do "
+        "limite em R$/kWh, R$/mes e p.p. Preco da Abertura sempre menor ou igual ao do Alvo e ao do Limite.",
         f"Projecao do contrato (padrao {NEG_PRAZO} anos a partir do ano da data de referencia): no ano t (t = 0 no "
         "primeiro ano) D, E e o Fio B SCEE sao multiplicados por (1 + reajuste)^t (padrao: IPCA acumulado dos ultimos "
         "12 meses divulgados), com aliquotas, flags, d, s e c fixos; % do Fio B do ano pela Lei 14.300 (2026 60%, 2027 "
@@ -3190,6 +3246,7 @@ a{color:var(--azul2)}
     </div>
     <div class="barra" style="margin-top:14px"><h3 style="margin:0">Faixa de negociação</h3><span class="esp"></span>
       <button class="btn" id="n-faixa-reset">Recalcular faixa</button></div>
+    <div class="nota-sim alerta" id="n-faixa-aviso" style="display:none"></div>
     <div class="tab" id="n-faixa"></div>
     <div class="mut" id="n-faixa-nota" style="margin-top:6px"></div>
     <h3>Projeção do contrato ano a ano</h3>
@@ -4563,7 +4620,7 @@ a{color:var(--azul2)}
 
   // ================= VISAO DE NEGOCIACAO (mesmas formulas de resolver_arrendamento e projecao_arrendamento no Python)
   var NG = AR.neg, negIni = false, negPedAuto = true, negFaixaEd = {}, negUlt = null;
-  var NFX = [["ab", "Abertura"], ["al", "Alvo"], ["li", "Limite"]];
+  var NFX = [["ab", "Abertura"], ["al", "Alvo"], ["li", "Limite"]], negOrdem = "";
   function negPadroes(tudo) {
     if (tudo) {
       $("n-var").value = "d"; $("n-ped-u").value = "mes"; $("n-mmin-u").value = "pct"; $("n-mmin").value = escN(NG.mmin * 100, 2);
@@ -4578,6 +4635,9 @@ a{color:var(--azul2)}
     var L = [["d", "Deságio nominal (%)"], ["s", "VB do dono (%)"], ["pk", "Preço ao parceiro (R$/kWh)"], ["dmwh", "Dono (R$/MWh)"], ["dmes", "Dono (R$/mês)"],
       ["dimp", "Deságio sobre a tarifa sem impostos (1 - dono / tarifa sem impostos)"], ["dv", "Deságio sobre a tarifa com impostos (1 - dono / tarifa com impostos)"], ["dwi", "Deságio sobre o valor compensado (1 - dono / valor compensado, referência)"],
       ["mmes", "Margem líquida Thopen (R$/mês)"], ["mpct", "Margem líquida Thopen (% do valor compensado)"], ["sit", "Situação"]];
+    // reconstroi na ordem atual de NFX preservando o que foi digitado e o foco
+    var vals = {}, foco = document.activeElement && document.activeElement.id;
+    NFX.forEach(function (c) { ["d", "s"].forEach(function (k) { var e = $("n-f-" + c[0] + "-" + k); if (e) vals[e.id] = e.value; }); });
     var h = '<table class="faixa lado"><thead><tr><th>Item</th>' + NFX.map(function (c) { return '<th id="n-fh-' + c[0] + '">' + c[1] + "</th>"; }).join("") + "</tr></thead><tbody>";
     L.forEach(function (l) {
       h += "<tr><td>" + esc(l[1]) + "</td>" + NFX.map(function (c) {
@@ -4585,7 +4645,10 @@ a{color:var(--azul2)}
         return l[0] === "d" || l[0] === "s" ? '<td class="n"><input type="text" inputmode="decimal" id="' + id + '"></td>' : '<td class="n" id="' + id + '"></td>'; }).join("") + "</tr>"; });
     $("n-faixa").innerHTML = h + "</tbody></table>";
     NFX.forEach(function (c) { ["d", "s"].forEach(function (k) { var id = "n-f-" + c[0] + "-" + k;
+      if (vals[id] != null) $(id).value = vals[id];
       $(id).addEventListener("input", function () { negFaixaEd[id] = true; negRender(); }); }); });
+    negOrdem = NFX.map(function (c) { return c[0]; }).join(",");
+    if (foco && $(foco) && $(foco).tagName === "INPUT") $(foco).focus();
   }
   // Calculo reverso linear: resolve d (s fixo) ou s (d fixo) para um pedido do dono ou uma margem minima (R$/MWh)
   function negResolver(r, x, vr, dono, mg) {
@@ -4632,7 +4695,7 @@ a{color:var(--azul2)}
     negUlt = null;
     ["n-kpis", "n-rev-ped", "n-rev-mg", "n-proj", "n-proj-kpis"].forEach(function (id) { $(id).innerHTML = ""; });
     $("n-kpis").innerHTML = '<div class="card erro">' + esc(msg) + "</div>";
-    $("n-faixa-nota").textContent = ""; $("n-proj-nota").textContent = "";
+    $("n-faixa-nota").textContent = ""; $("n-proj-nota").textContent = ""; $("n-faixa-aviso").textContent = ""; $("n-faixa-aviso").style.display = "none";
     if (graficos["g-neg"]) { graficos["g-neg"].destroy(); delete graficos["g-neg"]; }
   }
   function negRender() {
@@ -4658,7 +4721,7 @@ a{color:var(--azul2)}
     var mgMwh = mv == null ? null : (mu === "pct" ? mv / 100 * r.WI : (mu === "mwh" ? mv : (q > 0 ? mv / q : null)));
     var linha = function (a, b, c) { return "<tr><td>" + esc(a) + "</td>" + td(b, c) + "</tr>"; };
     var mgTxt = function (v) { return "R$ " + f2.format(v) + "/MWh; " + mes(v) + "; " + pct2(r.WI ? v / r.WI : null) + " do valor compensado"; };
-    var P1 = null, P2 = null;
+    var P1 = null, P2 = null, lim = {d: x.d, s: x.s}, rLim = null;
     $("n-ped-tit").textContent = "Pedido do dono: " + (vr === "d" ? "deságio necessário" : "VB necessário") + " (" + fixo + ")";
     if (pedMwh == null) $("n-rev-ped").innerHTML = '<div class="erro">' + (pv != null && q <= 0 ? "Sem energia compensada: informe o pedido em R$/MWh." : "Informe o valor pedido pelo dono.") + "</div>";
     else {
@@ -4679,20 +4742,30 @@ a{color:var(--azul2)}
     if (mgMwh == null) $("n-rev-mg").innerHTML = '<div class="erro">' + (mv != null && q <= 0 ? "Sem energia compensada: informe a margem em R$/MWh ou % do valor compensado." : "Informe a margem mínima.") + "</div>";
     else {
       P2 = negResolver(r, x, vr, null, mgMwh);
+      // limite arredondado a 0,01 p.p. para o lado seguro (d para cima, s para baixo): a margem fica >= a minima;
+      // o mesmo valor aparece como deságio mínimo / VB máximo, na coluna Limite e no texto da análise interna
+      if (P2.v != null) { var vl = Math.max(0, Math.min(1, P2.v));
+        if (vr === "d") lim.d = Math.min(1, Math.ceil(vl * 10000 - 1e-7) / 10000); else lim.s = Math.max(0, Math.floor(vl * 10000 + 1e-7) / 10000); }
+      rLim = calcArr(x.Dv, x.Ev, x.ic, x.pc, x.fte, x.ftu, lim.s, lim.d, x.c, x.fb, x.fbCom);
+      P2.vLim = vr === "d" ? lim.d : lim.s; P2.teto = P2.ok ? rLim.dono : P2.dmax;
       var L2 = [linha("Margem mínima (líquida do desconto ao cliente de " + pct2(x.c) + ")", esc(mgTxt(mgMwh)))];
       if (P2.v == null) L2.push(linha("Resultado", "Sem solução: " + esc(P2.motivo), "sem-sol"));
-      else L2.push(linha(vr === "d" ? "Deságio nominal mínimo" : "VB do dono máximo", "<b>" + esc(pct2(P2.v)) + "</b>" + (P2.ok ? "" : " (sem solução: " + esc(P2.motivo) + ")"), P2.ok ? "" : "sem-sol"));
-      L2.push(linha("Pagamento máximo ao dono (teto)", "<b>" + esc("R$ " + f2.format(P2.dmax) + "/MWh; " + mes(P2.dmax) + "; " + brl(P2.dmax * q * 12) + "/ano") + "</b>", P2.dmax < 0 ? "negativo" : ""));
-      L2.push(linha("Teto em R$/kWh e deságio sobre a tarifa sem / com impostos", esc("R$ " + f4.format(P2.dmax / 1000) + "/kWh; " + pct2(r.U ? 1 - P2.dmax / r.U : null) + " / " + pct2(r.V ? 1 - P2.dmax / r.V : null))));
-      L2.push(linha("Proposta atual x teto", esc("atual " + mes(r.dono) + "; " + (P2.dmax - r.dono >= 0 ? "folga de " + mes(P2.dmax - r.dono) : "acima do teto em " + mes(r.dono - P2.dmax)))));
+      else L2.push(linha(vr === "d" ? "Deságio nominal mínimo" : "VB do dono máximo", "<b>" + esc(pct2(P2.ok ? P2.vLim : P2.v)) + "</b>" + (P2.ok ? "" : " (sem solução: " + esc(P2.motivo) + ")"), P2.ok ? "" : "sem-sol"));
+      var tt = P2.teto;
+      L2.push(linha("Pagamento máximo ao dono (teto)", "<b>" + esc("R$ " + f2.format(tt) + "/MWh; " + mes(tt) + "; " + brl(tt * q * 12) + "/ano") + "</b>", tt < 0 ? "negativo" : ""));
+      L2.push(linha("Teto em R$/kWh e deságio sobre a tarifa sem / com impostos", esc("R$ " + f4.format(tt / 1000) + "/kWh; " + pct2(r.U ? 1 - tt / r.U : null) + " / " + pct2(r.V ? 1 - tt / r.V : null))));
+      L2.push(linha("Proposta atual x teto", esc("atual " + mes(r.dono) + "; " + (tt - r.dono >= -1e-9 ? "folga de " + mes(Math.max(0, tt - r.dono)) : "acima do teto em " + mes(r.dono - tt)))));
       $("n-rev-mg").innerHTML = tabela(["Item", "Valor"], L2, "", "lado");
     }
     // 3. faixa de negociacao
-    var lim = {d: x.d, s: x.s};
-    // limite arredondado a 0,01 p.p. para o lado seguro (d para cima, s para baixo): a margem fica >= a minima
-    if (P2 && P2.v != null) { var vl = Math.max(0, Math.min(1, P2.v));
-      if (vr === "d") lim.d = Math.min(1, Math.ceil(vl * 10000 - 1e-7) / 10000); else lim.s = Math.max(0, Math.floor(vl * 10000 + 1e-7) / 10000); }
-    var padr = {ab: {d: Math.min(1, x.d + NG.abertura), s: x.s}, al: {d: x.d, s: x.s}, li: lim}, FX = {};
+    // Alvo = configuração atual (pedido do dono). Se passa do limite (margem abaixo da mínima), a Abertura parte do
+    // Limite e a ordem vira Abertura, Limite, Pedido do dono; senão parte do Alvo. O preço da Abertura nunca fica acima do Alvo nem do Limite.
+    var acima = mgMwh != null && P2 != null && r.mg < mgMwh - 1e-9;
+    var abP = vr === "d" ? {d: Math.min(1, Math.max(x.d, lim.d) + NG.abertura), s: x.s} : {d: Math.min(1, x.d + NG.abertura), s: Math.min(x.s, lim.s)};
+    var padr = {ab: abP, al: {d: x.d, s: x.s}, li: lim}, FX = {};
+    NFX = acima ? [["ab", "Abertura"], ["li", "Limite"], ["al", "Pedido do dono (acima do limite)"]] : [["ab", "Abertura"], ["al", "Alvo"], ["li", "Limite"]];
+    if (NFX.map(function (c) { return c[0]; }).join(",") !== negOrdem) negMontaFaixa();
+    NFX.forEach(function (c) { $("n-fh-" + c[0]).textContent = c[1]; });
     NFX.forEach(function (c) {
       var k = c[0], o = {};
       ["d", "s"].forEach(function (z) { var id = "n-f-" + k + "-" + z;
@@ -4702,11 +4775,23 @@ a{color:var(--azul2)}
       FX[k] = {d: o.d, s: o.s, r: rr, abx: abx};
       var put = function (z, v) { var e = $("n-f-" + k + "-" + z); e.textContent = v; e.className = "n" + (abx ? " abaixo" : ""); };
       put("pk", f4.format(rr.pk)); put("dmwh", num(rr.dono)); put("dmes", brl(rr.dono * q)); put("dimp", pct2(rr.dimp)); put("dv", pct2(rr.dV)); put("dwi", pct2(rr.dWI)); put("mmes", brl(rr.mg * q));
-      put("mpct", pct2(rr.WI ? rr.mg / rr.WI : null)); put("sit", mgMwh == null ? "-" : (abx ? "abaixo da margem mínima" : "ok"));
+      put("mpct", pct2(rr.WI ? rr.mg / rr.WI : null)); put("sit", mgMwh == null ? "-" : (abx ? (k === "al" && acima ? "acima do limite: margem abaixo da mínima" : "abaixo da margem mínima") : "ok"));
       $("n-fh-" + k).className = abx ? "abaixo" : "";
       ["d", "s"].forEach(function (z) { $("n-f-" + k + "-" + z).parentNode.className = "n" + (abx ? " abaixo" : ""); });
     });
-    $("n-faixa-nota").textContent = "Abertura: deságio atual + " + f0.format(NG.abertura * 100) + " p.p.; Alvo: configuração atual; Limite: " +
+    var exc = null;
+    if (acima && P2 && !P2.ok) {
+      $("n-faixa-aviso").textContent = "O pedido do dono fica abaixo da margem mínima e não há " + (vr === "d" ? "deságio nominal" : "VB do dono") + " entre 0 e 100% que a atinja" +
+        (vr === "s" ? " com o deságio nominal atual: ajuste o deságio nominal." : ".");
+      $("n-faixa-aviso").style.display = "";
+    } else if (acima && rLim) { var dif = r.dono - rLim.dono;
+      exc = {mwh: dif, kwh: dif / 1000, mes: dif * q, pp: (vr === "d" ? lim.d - x.d : x.s - lim.s) * 100, pk: rLim.pk};
+      $("n-faixa-aviso").textContent = "O pedido do dono passa do limite em R$ " + f4.format(exc.kwh) + "/kWh (" + brl(exc.mes) + "/mês; " + f2.format(exc.pp) + " p.p. de " +
+        (vr === "d" ? "deságio nominal" : "VB do dono") + "): para manter a margem mínima, o preço máximo é R$ " + f4.format(exc.pk) + "/kWh.";
+      $("n-faixa-aviso").style.display = "";
+    } else { $("n-faixa-aviso").textContent = ""; $("n-faixa-aviso").style.display = "none"; }
+    $("n-faixa-nota").textContent = "Abertura: " + (acima ? (vr === "d" ? "deságio mínimo" : "VB máximo com deságio atual") + " + " + f0.format(NG.abertura * 100) + " p.p. de deságio, pois o pedido do dono passa do limite"
+      : "deságio atual + " + f0.format(NG.abertura * 100) + " p.p., sem passar do limite") + "; " + (acima ? "Pedido do dono" : "Alvo") + ": configuração atual; Limite: " +
       (vr === "d" ? "deságio mínimo" : "VB máximo") + " da margem mínima, arredondado a 0,01 p.p. para o lado seguro" + (P2 && P2.v != null && !P2.ok ? " (sem solução em 0 a 100%: valor limitado à faixa)" : "") +
       ". Edite o deságio nominal e o VB do dono em qualquer coluna; em vermelho, margem abaixo da mínima. Recalcular faixa volta aos padrões.";
     // 4. projecao
@@ -4742,7 +4827,7 @@ a{color:var(--azul2)}
       options: {responsive: true, maintainAspectRatio: false, locale: "pt-BR", plugins: {legend: {position: "bottom", labels: {boxWidth: 14}},
         tooltip: {callbacks: {label: function (c) { return c.dataset.label + ": " + brl(c.parsed.y); }}}},
         scales: {y: eixoY(function (v) { return "R$ " + f0.format(v); }), x: {grid: {display: false}}}}});
-    negUlt = {r: r, x: x, G: G, q: q, P1: P1, P2: P2, pedMwh: pedMwh, mgMwh: mgMwh, vr: vr, FX: FX, P: P, PJ: PJ, gd: gd};
+    negUlt = {r: r, x: x, G: G, q: q, P1: P1, P2: P2, pedMwh: pedMwh, mgMwh: mgMwh, vr: vr, FX: FX, NFX: NFX, exc: exc, P: P, PJ: PJ, gd: gd};
   }
   function negUsina() {
     var G = arrUlt.G, tp = G.tp, nome = $("a-usina").value.trim();
@@ -4777,12 +4862,14 @@ a{color:var(--azul2)}
       "Configuração atual: " + (x.modo === "p" ? "preço R$ " + f4.format(x.P) + "/kWh, deságio nominal equivalente " : "deságio nominal ") + pct2(x.d) + ", VB do dono " + pct2(x.s) + ", desconto ao cliente " + pct2(x.c) + "; dono R$ " + f4.format(r.pk) + "/kWh, R$ " + f2.format(r.dono) + "/MWh (" + m(r.dono) + "); margem líquida Thopen R$ " + f2.format(r.mg) + "/MWh (" + m(r.mg) + ", " + pct2(r.WI ? r.mg / r.WI : null) + " do valor compensado)",
       "Tarifas (R$/kWh): sem impostos " + f4.format(r.U / 1000) + ", com impostos " + f4.format(r.V / 1000) + ", valor compensado " + f4.format(r.WI / 1000) + ", Fio B do dono " + f4.format(r.cfb / 1000) + "; deságio do dono sobre a tarifa sem impostos " + pct2(r.dimp) + ", sobre a tarifa com impostos " + pct2(r.dV) + ", sobre o valor compensado " + pct2(r.dWI)];
     if (P2) L.push("Margem mínima: R$ " + f2.format(n.mgMwh) + "/MWh (" + m(n.mgMwh) + ", " + pct2(r.WI ? n.mgMwh / r.WI : null) + " do valor compensado); " +
-      (P2.v == null ? "sem solução (" + P2.motivo + ")" : (n.vr === "d" ? "deságio mínimo " : "VB máximo ") + pct2(P2.v) + (P2.ok ? "" : " (sem solução: " + P2.motivo + ")")) +
-      "; pagamento máximo ao dono R$ " + f2.format(P2.dmax) + "/MWh (" + m(P2.dmax) + ")");
+      (P2.v == null ? "sem solução (" + P2.motivo + ")" : (n.vr === "d" ? "deságio mínimo " : "VB máximo ") + pct2(P2.ok ? P2.vLim : P2.v) + (P2.ok ? "" : " (sem solução: " + P2.motivo + ")")) +
+      "; pagamento máximo ao dono R$ " + f2.format(P2.teto) + "/MWh (" + m(P2.teto) + ", R$ " + f4.format(P2.teto / 1000) + "/kWh)");
     if (P1) L.push("Pedido do dono: R$ " + f2.format(n.pedMwh) + "/MWh (" + m(n.pedMwh) + "); " +
       (P1.v == null ? "sem solução (" + P1.motivo + ")" : nv + " necessário " + pct2(P1.v) + (P1.ok ? "" : " (sem solução)") + "; margem Thopen " + m(P1.mg) + " (" + pct2(r.WI ? P1.mg / r.WI : null) + " do valor compensado)" +
         (n.mgMwh != null && P1.ok ? (P1.mg >= n.mgMwh - 1e-9 ? "; viável" : "; abaixo da margem mínima") : "")));
-    L.push("Faixa: " + NFX.map(function (c) { var f = n.FX[c[0]]; return c[1] + ": deságio nominal " + pct2(f.d) + ", VB do dono " + pct2(f.s) + ", preço R$ " + f4.format(f.r.pk) + "/kWh, dono " + m(f.r.dono) + ", deságio sobre a tarifa sem impostos " + pct2(f.r.dimp) + ", sobre a tarifa com impostos " + pct2(f.r.dV) + ", sobre o valor compensado " + pct2(f.r.dWI) + ", margem " + m(f.r.mg) + (f.abx ? " (abaixo da mínima)" : ""); }).join("; "));
+    if (n.exc) L.push("Pedido do dono acima do limite: passa em R$ " + f4.format(n.exc.kwh) + "/kWh (" + m(n.exc.mwh) + "; " + f2.format(n.exc.pp) + " p.p. de " + nv +
+      "); para manter a margem mínima, o preço máximo é R$ " + f4.format(n.exc.pk) + "/kWh; a Abertura parte do Limite");
+    L.push("Faixa: " + n.NFX.map(function (c) { var f = n.FX[c[0]]; return c[1] + ": deságio nominal " + pct2(f.d) + ", VB do dono " + pct2(f.s) + ", preço R$ " + f4.format(f.r.pk) + "/kWh, dono " + m(f.r.dono) + ", deságio sobre a tarifa sem impostos " + pct2(f.r.dimp) + ", sobre a tarifa com impostos " + pct2(f.r.dV) + ", sobre o valor compensado " + pct2(f.r.dWI) + ", margem " + m(f.r.mg) + (f.abx ? " (abaixo da mínima)" : ""); }).join("; "));
     L.push("Projeção (" + (n.P.fixo === "p" ? "preço fixo reajustado pelo índice" : "deságio fixo") + "): " + PJ.anos.map(function (a) { return a.ano + ": deságio nominal " + pct2(a.d) + ", R$ " + f4.format(a.pk) + "/kWh, deságio sobre a tarifa sem impostos " + pct2(a.dimp) + ", sobre a tarifa com impostos " + pct2(a.dV); }).join("; "));
     L.push("Projeção " + n.P.prazo + " anos: total dono R$ " + f2.format(PJ.tot.dono) + ", total margem Thopen R$ " + f2.format(PJ.tot.mg) + "; VPL a " + pct2(n.P.taxa) + " a.a.: dono R$ " + f2.format(PJ.vpl.dono) + ", Thopen (margem líquida) R$ " + f2.format(PJ.vpl.mg));
     return L.join("\n");
