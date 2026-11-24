@@ -1,6 +1,15 @@
 {
-  "assinatura_painel": "406aa523370ec5f523bec191ac3cb741c3f969a8",
-  "avisos_fonte": [],
+  "assinatura_painel": "b7aac96bb8dac93b3fb6a1a2de2653a8483479e1",
+  "avisos_fonte": [
+    "tarifas_b3: falha ao atualizar (package_show indisponivel); usado o recorte salvo recorte_tarifas_b3.csv (last_modified 2026-11-04T10:22:56.788203, baixado em 2026-11-04)",
+    "tarifas_grupo_a: falha ao atualizar (package_show indisponivel); usado o recorte salvo recorte_tarifas_grupo_a.csv (last_modified 2026-11-04T10:22:56.788203, baixado em 2026-11-04)",
+    "fiob_2024: falha ao atualizar (package_show indisponivel); usado o recorte salvo recorte_fiob_2024.csv (last_modified 2026-11-02T08:46:03.972553, baixado em 2026-11-04)",
+    "fiob_a_2024: falha ao atualizar (package_show indisponivel); usado o recorte salvo recorte_fiob_a_2024.csv (last_modified 2026-11-02T08:46:03.972553, baixado em 2026-11-04)",
+    "fiob_2025: falha ao atualizar (package_show indisponivel); usado o recorte salvo recorte_fiob_2025.csv (last_modified 2026-11-02T06:11:29.194392, baixado em 2026-11-04)",
+    "fiob_a_2025: falha ao atualizar (package_show indisponivel); usado o recorte salvo recorte_fiob_a_2025.csv (last_modified 2026-11-02T06:11:29.194392, baixado em 2026-11-04)",
+    "fiob_2026: falha ao atualizar (package_show indisponivel); usado o recorte salvo recorte_fiob_2026.csv (last_modified 2026-11-02T08:33:45.028278, baixado em 2026-11-04)",
+    "fiob_a_2026: falha ao atualizar (package_show indisponivel); usado o recorte salvo recorte_fiob_a_2026.csv (last_modified 2026-11-02T08:33:45.028278, baixado em 2026-11-04)"
+  ],
   "distribuidoras_grupo_a": {
     "A3 Azul": 49,
     "A4 Azul": 114,
@@ -93,7 +102,7 @@
       "subgrupos": "A4,A3"
     }
   },
-  "ultima_verificacao": "2026-11-04",
+  "ultima_verificacao": "2026-11-24",
   "ultima_vigencia_b3": "2026-10-23",
   "ultima_vigencia_fiob": "2026-10-23",
   "ultima_vigencia_grupo_a": "2026-10-23"

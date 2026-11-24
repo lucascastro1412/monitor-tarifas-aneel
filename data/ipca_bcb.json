@@ -1,5 +1,5 @@
 {
- "baixado_em": "2026-11-04",
+ "baixado_em": "2026-11-24",
  "fonte": "Banco Central do Brasil, SGS serie 433 (IPCA, variacao % mensal)",
  "mensal": {
   "2010-01": 0.75,
@@ -202,8 +202,9 @@
   "2026-06": 0.16,
   "2026-07": 0.07,
   "2026-08": -0.32,
-  "2026-09": 0.82
+  "2026-09": 0.82,
+  "2026-10": 0.14
  },
- "ultima_tentativa": "2026-11-04",
+ "ultima_tentativa": "2026-11-24",
  "url": "https://api.bcb.gov.br/dados/serie/bcdata.sgs.433/dados"
 }
