@@ -1660,6 +1660,87 @@ def calc_arrendamento(tusd: float, te: float, icms: float, pc: float, flag_te: i
             "desagio_impl": 1 - dono / u if u else None, "d": d, "s": s, "c": c}
 
 
+# ------------------------------------------------------------ visao de negociacao (arrendamento)
+
+NEG_ABERTURA_PP = 0.10      # abertura da faixa: desagio atual + 10 p.p.
+NEG_MARGEM_MIN = 0.20       # margem minima padrao da Thopen, em % de W_I (liquida do desconto ao cliente)
+NEG_PRAZO, NEG_TAXA = 10, 0.12
+NEG_DEGRADACAO = {"ufv": 0.005, "cgh": 0.0, "direto": 0.0}
+
+
+def resolver_arrendamento(r: dict, var: str = "d", dono: float | None = None, margem: float | None = None) -> dict:
+    """Calculo reverso do arrendamento (opcao A), linear em d e em s, por MWh compensado.
+
+    r = resultado de calc_arrendamento com a configuracao atual (U, W_I, Y, custo_fb, d, s, c).
+    var = "d" resolve o desagio com o s atual; var = "s" resolve o VB com o d atual.
+    Alvo: dono (R$/MWh pedido pelo dono) ou margem (margem liquida minima da Thopen em R$/MWh, ja descontado c.W_I).
+      pedido:  d = 1 - (dono + custo_FioB - s.Y) / U        s = (dono + custo_FioB - (1 - d).U) / Y
+      margem:  d = (margem + c.W_I - (1 - s).Y) / U          s = 1 - (margem + c.W_I - d.U) / Y
+    Com margem, o pagamento maximo ao dono = W_I - custo_FioB - c.W_I - margem (nao depende de d nem de s).
+    Retorna ok, motivo (sem solucao: U = 0, Y = 0 ou valor fora de [0, 1]), valor (d ou s resolvido, mesmo fora da
+    faixa), d, s, dono, thopen, margem, desagio_impl e dono_max (so com margem).
+    """
+    if (dono is None) == (margem is None):
+        raise ValueError("informe dono ou margem")
+    u, w, y, cfb, c = r["U"], r["W_I"], r["Y"], r["custo_fb"], r["c"]
+    d, s = r["d"], r["s"]
+    out = {"var": var, "ok": False, "motivo": "", "valor": None, "dono_max": None}
+    if margem is not None:
+        out["dono_max"] = w - cfb - c * w - margem
+    if var == "d":
+        if not u:
+            out["motivo"] = "U = 0: o desagio nao altera o resultado"
+            return out
+        v = 1 - (dono + cfb - s * y) / u if dono is not None else (margem + c * w - (1 - s) * y) / u
+        d = v
+    elif var == "s":
+        if abs(y) < 1e-12:
+            out["motivo"] = "Y = 0: sem beneficio fiscal, o VB nao altera o resultado"
+            return out
+        v = (dono + cfb - (1 - d) * u) / y if dono is not None else 1 - (margem + c * w - d * u) / y
+        s = v
+    else:
+        raise ValueError(f"var invalida: {var}")
+    out["valor"] = v
+    dn = (1 - d) * u + s * y - cfb
+    th = d * u + (1 - s) * y
+    out.update({"d": d, "s": s, "dono": dn, "thopen": th, "margem": th - c * w,
+                "desagio_impl": 1 - dn / u if u else None})
+    if v < -1e-12 or v > 1 + 1e-12:
+        out["motivo"] = f"{'desagio d' if var == 'd' else 'VB s'} fora de 0 a 100%"
+    else:
+        out["ok"] = True
+    return out
+
+
+def projecao_arrendamento(tusd: float, te: float, icms: float, pc: float, flag_te: int = 1, flag_tusd: int = 1,
+                          s: float = ARR_VB, d: float = ARR_DESAGIO, c: float = ARR_DESCONTO, fiob: float = 0.0,
+                          gd: int = 2, fb_com_impostos: bool = True, mwh_mes: float = 1.0, prazo: int = NEG_PRAZO,
+                          ano_ini: int = 2026, reajuste: float = 0.0, degradacao: float = 0.0, taxa: float = NEG_TAXA,
+                          escalonar: bool = True, pct_fb: float | None = None) -> dict:
+    """Projecao do contrato de arrendamento ano a ano (ano t = 0 .. prazo - 1, ano civil ano_ini + t).
+
+    D, E e o Fio B SCEE sao reajustados por (1 + reajuste)^t (aliquotas fixas, entao U, W_I, Y e o custo do Fio B
+    sobem no mesmo indice). % do Fio B: GD I = 0; GD II/III com escalonar = Lei 14.300 do ano (60/75/90%, 2029 em
+    diante 100% como aproximacao); sem escalonar = pct_fb fixo (padrao: o % do ano inicial). Geracao do ano =
+    mwh_mes x (1 - degradacao)^t x 12. VPL com fluxos anuais no fim de cada ano: soma fluxo_t / (1 + taxa)^(t + 1).
+    """
+    anos, p_fixo = [], escalonamento_ano(ano_ini) if pct_fb is None else pct_fb
+    for t in range(int(prazo)):
+        ano, f = ano_ini + t, (1 + reajuste) ** t
+        p = 0.0 if gd == 1 else (escalonamento_ano(ano) if escalonar else p_fixo)
+        r = calc_arrendamento(tusd * f, te * f, icms, pc, flag_te, flag_tusd, s, d, c, fiob * f * p, fb_com_impostos)
+        q = mwh_mes * (1 - degradacao) ** t * 12
+        anos.append({"ano": ano, "t": t, "fator": f, "pct_fb": p, "U": r["U"], "W_I": r["W_I"], "Y": r["Y"],
+                     "fb_scee": fiob * f, "custo_fb": r["custo_fb"], "dono_mwh": r["dono"], "mwh_ano": q,
+                     "dono": r["dono"] * q, "thopen": r["thopen"] * q, "margem": r["margem"] * q,
+                     "custo_fb_ano": r["custo_fb"] * q, "desagio_impl": r["desagio_impl"]})
+    vp = lambda k: sum(a[k] / (1 + taxa) ** (a["t"] + 1) for a in anos)  # noqa: E731
+    tot = lambda k: sum(a[k] for a in anos)  # noqa: E731
+    return {"anos": anos, "total": {k: tot(k) for k in ("dono", "thopen", "margem", "mwh_ano", "custo_fb_ano")},
+            "vpl": {k: vp(k) for k in ("dono", "thopen", "margem")}, "taxa": taxa}
+
+
 def geracao_mwh_mes(tipo: str, potencia: float = 0.0, produtividade_ano: float = PRODUTIVIDADE_PADRAO,
                     perdas: float = 0.0, fc: float = ARR_FC_CGH, mwh_mes: float = 0.0,
                     pct_compensado: float = 1.0) -> float:
@@ -1918,6 +1999,29 @@ def textos_arrendamento() -> list[str]:
         "pela Lei 14.300 (art. 27, par. 1o) ela paga 100% do Fio B mais 40% do Fio A, TFSEE e P&D/EE, o que nao "
         "esta modelado (o % do Fio B e editavel). Tabela de referencia no Excel: usina de 1 MWh/mes compensado, "
         "d = 30% e s = 50% para todas, Fio B com impostos, GD II e GD III com o Fio B efetivo da vigencia atual.",
+        "VISAO DE NEGOCIACAO (aba Arrendamento): proposta ao dono (R$/MWh, R$/mes, R$/ano; dono / W_I; dono / U; "
+        "desagio nominal e implicito; Fio B pago pelo dono). Calculo reverso, linear em d e em s, com custo_FioB = "
+        "FB_ef x k_full (ou FB_ef): pedido do dono em R$/MWh (R$/mes / MWh compensado no mes) -> d = 1 - (dono + "
+        "custo_FioB - s x Y) / U com o s atual, ou s = (dono + custo_FioB - (1 - d) x U) / Y com o d atual. Margem "
+        "minima da Thopen m (R$/MWh, R$/mes ou % de W_I, ja liquida do desconto c x W_I) -> d_min = (m + c x W_I - "
+        "(1 - s) x Y) / U, ou s_max = 1 - (m + c x W_I - d x U) / Y; pagamento maximo ao dono (teto da negociacao) = "
+        "W_I - custo_FioB - c x W_I - m. Sem solucao quando o valor resolvido sai de 0 a 100%, U = 0 (resolver d) "
+        "ou Y = 0 (resolver s, o VB nao muda nada). Faixa de negociacao: Abertura (padrao d atual + 10 p.p.), Alvo "
+        "(configuracao atual) e Limite (d_min ou s_max da margem minima), editaveis; coluna em vermelho quando a "
+        "margem fica abaixo da minima.",
+        f"Projecao do contrato (padrao {NEG_PRAZO} anos a partir do ano da data de referencia): no ano t (t = 0 no "
+        "primeiro ano) D, E e o Fio B SCEE sao multiplicados por (1 + reajuste)^t (padrao: IPCA acumulado dos ultimos "
+        "12 meses divulgados), com aliquotas, flags, d, s e c fixos; % do Fio B do ano pela Lei 14.300 (2026 60%, 2027 "
+        "75%, 2028 90%; de 2029 em diante a regra sera definida pela ANEEL, aqui aproximada por 100%), ou o % fixo "
+        "informado se o escalonamento for desligado; GD I = 0 em todos os anos. Geracao do ano = MWh/mes x (1 - "
+        "degradacao)^t x 12 (padrao 0,5% a.a. para UFV e 0% para CGH). VPL = soma do fluxo do ano / (1 + taxa)^(t + 1), "
+        f"fluxos no fim de cada ano, taxa padrao {int(NEG_TAXA * 100)}% a.a. Limitacoes: reajuste unico para TUSD, TE "
+        "e Fio B (os reajustes reais da ANEEL diferem por componente e por distribuidora), tributos constantes, sem "
+        "bandeiras, CIP, custo de disponibilidade, inadimplencia, O&M e impostos sobre a receita; GD III segue a "
+        "mesma regra do Fio B, sem o Fio A, TFSEE e P&D/EE. Excel, aba Negociacao (referencia): 10 anos para as "
+        "distribuidoras com aliquotas de faturas, 1 MWh/mes, d = 30%, s = 50%, GD II, reajuste IPCA 12 meses, sem "
+        "degradacao, com Total e VPL por distribuidora. 'Copiar proposta' gera o texto para o proprietario (sem a "
+        "margem da Thopen); 'Copiar analise interna' inclui margem, limite e VPL.",
     ]
 
 
@@ -2018,6 +2122,10 @@ CABEC_RS |= {"U tarifa sem tributos", "V tarifa cheia", "W GD I", "Y GD I", "X G
 # Arrendamento (referencia)
 CABEC_PCT |= {"Desagio d", "VB s"} | {f"Desagio implicito {g}" for g in ("GD I", "GD II", "GD III")}
 CABEC_RS |= {f"{p} {g}" for p in ("Custo Fio B", "Dono", "Thopen") for g in ("GD I", "GD II", "GD III")}
+# Negociacao (referencia)
+CABEC_PCT |= {"% Fio B (Lei 14.300)", "Desagio implicito"}
+CABEC_RS |= {"Y beneficio fiscal", "Custo Fio B (R$/MWh)", "Dono (R$/MWh)", "Geracao (MWh/ano)", "Dono (R$/ano)",
+             "Thopen (R$/ano)", "Margem liquida (R$/ano)"}
 
 
 def abas_impostos(visoes: dict) -> list[tuple]:
@@ -2054,7 +2162,52 @@ def abas_impostos(visoes: dict) -> list[tuple]:
     if fat is not None and len(fat):
         abas.append(("Impostos faturas", fat, False, "tl"))
     abas.append(("Arrendamento (referência)",tabela_arrendamento(m, visoes.get("prod") or {}), False, "tl"))
+    abas.append(("Negociação (referência)", tabela_negociacao(m, visoes), False, "tl"))
     return abas
+
+
+def ipca_12m(visoes: dict) -> float | None:
+    """IPCA acumulado dos ultimos 12 meses divulgados (fracao), padrao do reajuste anual na projecao."""
+    v = ((visoes.get("ctx") or {}).get("periodos") or {}).get("12m", (None,))[0]
+    return None if v is None or pd.isna(v) else float(v)
+
+
+def tabela_negociacao(m: pd.DataFrame, visoes: dict) -> pd.DataFrame:
+    """Projecao de 10 anos de uma usina-padrao de 1 MWh/mes compensado, d = 30%, s = 50%, c = 0, GD II, Fio B com
+    impostos e escalonamento da Lei 14.300, reajuste = IPCA 12 meses, sem degradacao, VPL a 12% a.a., para as
+    distribuidoras com aliquotas de faturas. Uma linha por ano, mais Total e VPL por distribuidora."""
+    hoje = visoes.get("hoje") or date.today()
+    reaj = ipca_12m(visoes) or 0.0
+    linhas = []
+    sel = m[m["fonte_icms"].fillna("").astype(str).str.startswith("faturas")] if "fonte_icms" in m.columns else m.iloc[0:0]
+    for _, r in sel.iterrows():
+        if pd.isna(r.get("tusd")) or pd.isna(r.get("te")) or pd.isna(r.get("icms")):
+            continue
+        fb = r.get("fiob")
+        fb = 0.0 if pd.isna(fb) or r.get("fiob_suspeito") else float(fb)
+        p = projecao_arrendamento(r["tusd"], r["te"], r["icms"], r["pc"], int(r["flag_te"]), int(r["flag_tusd"]),
+                                  s=ARR_VB, d=ARR_DESAGIO, c=0.0, fiob=fb, gd=2, mwh_mes=1.0, prazo=NEG_PRAZO,
+                                  ano_ini=hoje.year, reajuste=reaj, degradacao=0.0, taxa=NEG_TAXA)
+        base = {"Distribuidora": r["Distribuidora"], "UF": str(r.get("uf") or "")}
+        for a in p["anos"]:
+            linhas.append({**base, "Ano": a["ano"], "% Fio B (Lei 14.300)": a["pct_fb"], "U tarifa sem tributos": a["U"],
+                           "Y beneficio fiscal": a["Y"], "Custo Fio B (R$/MWh)": a["custo_fb"],
+                           "Dono (R$/MWh)": a["dono_mwh"], "Geracao (MWh/ano)": a["mwh_ano"],
+                           "Dono (R$/ano)": a["dono"], "Thopen (R$/ano)": a["thopen"],
+                           "Margem liquida (R$/ano)": a["margem"], "Desagio implicito": a["desagio_impl"]})
+        linhas.append({**base, "Ano": f"Total {NEG_PRAZO} anos", "Geracao (MWh/ano)": p["total"]["mwh_ano"],
+                       "Dono (R$/ano)": p["total"]["dono"], "Thopen (R$/ano)": p["total"]["thopen"],
+                       "Margem liquida (R$/ano)": p["total"]["margem"]})
+        linhas.append({**base, "Ano": f"VPL {int(NEG_TAXA * 100)}% a.a.", "Dono (R$/ano)": p["vpl"]["dono"],
+                       "Thopen (R$/ano)": p["vpl"]["thopen"], "Margem liquida (R$/ano)": p["vpl"]["margem"]})
+    t = pd.DataFrame(linhas)
+    if len(t):
+        t["Premissas"] = ""
+        t.loc[t.index[0], "Premissas"] = (f"1 MWh/mes compensado, d = {int(ARR_DESAGIO * 100)}%, s = {int(ARR_VB * 100)}%, "
+                                          f"c = 0, GD II, Fio B com impostos e escalonamento da Lei 14.300 (2029+ 100%), "
+                                          f"reajuste anual {br(reaj * 100)}% (IPCA 12 meses), sem degradacao, "
+                                          f"VPL a {int(NEG_TAXA * 100)}% a.a. com fluxos no fim de cada ano")
+    return t
 
 
 def tabela_arrendamento(m: pd.DataFrame, prod: dict) -> pd.DataFrame:
@@ -2613,7 +2766,9 @@ def dados_html(visoes: dict, log_path: Path, cfg: dict, agora: datetime, estado:
                                                      "s": REPASSE_PADRAO}},
         "arr": {"prod": {uf: [_num(v, 1), _txt(f)] for uf, (v, f) in sorted((visoes.get("prod") or {}).items())},
                 "prod_padrao": PRODUTIVIDADE_PADRAO, "d": ARR_DESAGIO, "s": ARR_VB, "c": ARR_DESCONTO,
-                "fc": ARR_FC_CGH, "horas": ARR_HORAS_MES, "grade_d": list(ARR_GRADE_D), "grade_s": list(ARR_GRADE_S)},
+                "fc": ARR_FC_CGH, "horas": ARR_HORAS_MES, "grade_d": list(ARR_GRADE_D), "grade_s": list(ARR_GRADE_S),
+                "neg": {"abertura": NEG_ABERTURA_PP, "mmin": NEG_MARGEM_MIN, "prazo": NEG_PRAZO, "taxa": NEG_TAXA,
+                        "degr": NEG_DEGRADACAO, "ipca12": _num(ipca_12m(visoes), 6)}},
     }
 
 
@@ -2722,6 +2877,12 @@ td.negativo{color:var(--vermelho);font-weight:600}
 table.sens td.n{text-align:center;min-width:92px}
 table.sens td.atual{outline:3px solid var(--azul);outline-offset:-3px;font-weight:700}
 table.sens th.lin{background:#2F5597}
+table.faixa td.abaixo{background:#FDECEA;color:var(--vermelho);font-weight:600}
+table.faixa th.abaixo{background:var(--vermelho)}
+table.faixa input{width:76px;padding:4px 6px;border:1px solid var(--borda);border-radius:6px;font:inherit;text-align:right}
+.n-tit{color:var(--azul);font-size:13px}
+td.sem-sol{color:var(--vermelho);font-weight:600}
+tr.tot td{background:#F7F9FC;font-weight:650;color:var(--azul)}
 .campos input.largo{width:220px}
 a{color:var(--azul2)}
 @media (max-width:640px){header{padding:18px 16px 0}header h1{font-size:18px}.graf{height:280px}.graf.alto{height:480px}.kpi .val{font-size:21px}}
@@ -2930,6 +3091,43 @@ a{color:var(--azul2)}
       <select id="a-smet"><option value="dono">Pagamento ao dono (R$/mês)</option><option value="margem">Margem líquida Thopen (R$/mês)</option><option value="dimp">Deságio implícito do dono (sobre U)</option></select></div>
     <div class="tab" id="a-sens"></div>
     <div class="mut" id="a-sens-nota" style="margin-top:6px"></div>
+  </section>
+  <section class="card" id="n-sec">
+    <div class="barra"><h2 style="margin:0">Visão de negociação</h2><span class="esp"></span>
+      <button class="btn" id="n-copiar">Copiar proposta</button>
+      <button class="btn" id="n-copiar-int">Copiar análise interna</button></div>
+    <div class="mut">Usa a configuração acima (distribuidora, enquadramento, tributos, deságio, VB, desconto ao cliente e geração). Valores por MWh compensado, convertidos para mês e ano com a energia compensada.</div>
+    <h3>Proposta ao dono (configuração atual)</h3>
+    <div class="grid kpis" id="n-kpis"></div>
+    <h3>Cálculo reverso</h3>
+    <div class="campos">
+      <label>Variável a ajustar<select id="n-var" style="min-width:260px"><option value="d">Deságio d (mantém o VB s atual)</option><option value="s">VB s (mantém o deságio d atual)</option></select></label>
+      <label>Pedido do dono<input type="text" inputmode="decimal" id="n-ped"></label>
+      <label>Unidade do pedido<select id="n-ped-u" style="min-width:120px"><option value="mes">R$/mês</option><option value="mwh">R$/MWh</option></select></label>
+      <label>Margem mínima da Thopen (líquida de c)<input type="text" inputmode="decimal" id="n-mmin"></label>
+      <label>Unidade da margem<select id="n-mmin-u" style="min-width:120px"><option value="pct">% de W_I</option><option value="mes">R$/mês</option><option value="mwh">R$/MWh</option></select></label>
+    </div>
+    <div class="grid dois">
+      <div><b class="n-tit" id="n-ped-tit">Pedido do dono</b><div class="tab" id="n-rev-ped" style="margin-top:6px"></div></div>
+      <div><b class="n-tit" id="n-mg-tit">Margem mínima da Thopen</b><div class="tab" id="n-rev-mg" style="margin-top:6px"></div></div>
+    </div>
+    <div class="barra" style="margin-top:14px"><h3 style="margin:0">Faixa de negociação</h3><span class="esp"></span>
+      <button class="btn" id="n-faixa-reset">Recalcular faixa</button></div>
+    <div class="tab" id="n-faixa"></div>
+    <div class="mut" id="n-faixa-nota" style="margin-top:6px"></div>
+    <h3>Projeção do contrato ano a ano</h3>
+    <div class="campos">
+      <label>Prazo (anos)<input type="text" inputmode="numeric" id="n-prazo"></label>
+      <label>Ano de início<input type="text" inputmode="numeric" id="n-ano"></label>
+      <label>Reajuste anual da tarifa (%)<input type="text" inputmode="decimal" id="n-reaj"></label>
+      <label>Degradação anual da geração (%)<input type="text" inputmode="decimal" id="n-degr"></label>
+      <label>Taxa de desconto anual (%)<input type="text" inputmode="decimal" id="n-taxa"></label>
+      <label>Fio B pelo escalonamento da Lei 14.300<select id="n-esc" style="min-width:200px"><option value="1">Sim (60, 75, 90 e 100%)</option><option value="0">Não (% fixo informado acima)</option></select></label>
+    </div>
+    <div class="grid kpis" id="n-proj-kpis"></div>
+    <div class="graf" style="margin-top:12px"><canvas id="g-neg"></canvas></div>
+    <div class="tab" id="n-proj" style="margin-top:12px"></div>
+    <div class="nota-sim" id="n-proj-nota"></div>
   </section>
   <div class="avisos"><b>Estimativa.</b> Sem bandeiras, sem CIP e sem custo de disponibilidade; sem inadimplência, O&amp;M, seguros ou tributos sobre a receita do arrendamento.
     Para GD III, pela Lei 14.300 (art. 27, par. 1o) a usina paga 100% do Fio B, 40% do Fio A, TFSEE e P&amp;D/EE: só o % do Fio B é modelado (editável).</div>
@@ -4104,7 +4302,7 @@ a{color:var(--azul2)}
     if (x.Dv == null || x.Ev == null || x.ic >= 1 || x.pc >= 1 || (1 - x.ic) * (1 - x.pc) <= 0) {
       arrUlt = null;
       $("a-kpis").innerHTML = '<div class="card erro">Informe TUSD e TE e alíquotas abaixo de 100%.</div>';
-      ["a-res", "a-mem", "a-sens"].forEach(function (id) { $(id).innerHTML = ""; }); $("a-nota").textContent = ""; $("a-sens-nota").textContent = ""; return;
+      ["a-res", "a-mem", "a-sens"].forEach(function (id) { $(id).innerHTML = ""; }); $("a-nota").textContent = ""; $("a-sens-nota").textContent = ""; negRender(); return;
     }
     var r = calcArr(x.Dv, x.Ev, x.ic, x.pc, x.fte, x.ftu, x.s, x.d, x.c, x.fb, x.fbCom), G = arrGeracao(), q = G.comp;
     arrUlt = {r: r, x: x, G: G};
@@ -4165,6 +4363,7 @@ a{color:var(--azul2)}
     if (r.dimp < 0) notas.push("Deságio implícito negativo: o dono recebe mais que a tarifa sem tributos U (VB alto e deságio baixo).");
     $("a-nota").textContent = notas.join(" ");
     arrSens();
+    negRender();
   }
   function arrSens() {
     if (!arrUlt) return;
@@ -4221,6 +4420,231 @@ a{color:var(--azul2)}
   ["a-data", "a-enq"].forEach(function (id) { $(id).addEventListener("change", function () { arrPfb(); arrRender(); }); });
   $("a-reset").addEventListener("click", function () { arrPadroes(true); arrTipo(); arrRender(); });
   $("a-calc").addEventListener("click", function (e) { e.preventDefault(); calcDist = arrDist; if (calcIni) calcPadroes(false); feitos.calculadora = false; mostrar("calculadora"); });
+
+  // ================= VISAO DE NEGOCIACAO (mesmas formulas de resolver_arrendamento e projecao_arrendamento no Python)
+  var NG = AR.neg, negIni = false, negPedAuto = true, negFaixaEd = {}, negUlt = null;
+  var NFX = [["ab", "Abertura"], ["al", "Alvo"], ["li", "Limite"]];
+  function negPadroes(tudo) {
+    if (tudo) {
+      $("n-var").value = "d"; $("n-ped-u").value = "mes"; $("n-mmin-u").value = "pct"; $("n-mmin").value = escN(NG.mmin * 100, 2);
+      $("n-prazo").value = String(NG.prazo); $("n-taxa").value = escN(NG.taxa * 100, 2); $("n-esc").value = "1";
+      $("n-reaj").value = escN((NG.ipca12 != null ? NG.ipca12 : 0) * 100, 4); $("n-ped").value = ""; negPedAuto = true;
+    }
+    $("n-ano").value = String($("a-data").value || D.meta.hoje).slice(0, 4);
+    $("n-degr").value = escN((NG.degr[$("a-tipo").value] || 0) * 100, 2);
+    negFaixaEd = {};
+  }
+  function negMontaFaixa() {
+    var L = [["d", "Deságio nominal d (%)"], ["s", "VB s (%)"], ["dmwh", "Dono (R$/MWh)"], ["dmes", "Dono (R$/mês)"], ["dimp", "Deságio implícito (1 - dono / U)"],
+      ["mmes", "Margem líquida Thopen (R$/mês)"], ["mpct", "Margem líquida Thopen (% de W_I)"], ["sit", "Situação"]];
+    var h = '<table class="faixa lado"><thead><tr><th>Item</th>' + NFX.map(function (c) { return '<th id="n-fh-' + c[0] + '">' + c[1] + "</th>"; }).join("") + "</tr></thead><tbody>";
+    L.forEach(function (l) {
+      h += "<tr><td>" + esc(l[1]) + "</td>" + NFX.map(function (c) {
+        var id = "n-f-" + c[0] + "-" + l[0];
+        return l[0] === "d" || l[0] === "s" ? '<td class="n"><input type="text" inputmode="decimal" id="' + id + '"></td>' : '<td class="n" id="' + id + '"></td>'; }).join("") + "</tr>"; });
+    $("n-faixa").innerHTML = h + "</tbody></table>";
+    NFX.forEach(function (c) { ["d", "s"].forEach(function (k) { var id = "n-f-" + c[0] + "-" + k;
+      $(id).addEventListener("input", function () { negFaixaEd[id] = true; negRender(); }); }); });
+  }
+  // Calculo reverso linear: resolve d (s fixo) ou s (d fixo) para um pedido do dono ou uma margem minima (R$/MWh)
+  function negResolver(r, x, vr, dono, mg) {
+    var u = r.U, w = r.WI, y = r.Y, cfb = r.cfb, c = x.c, d = x.d, s = x.s, o = {ok: false, motivo: "", v: null, dmax: null, vr: vr};
+    if (mg != null) o.dmax = w - cfb - c * w - mg;
+    if (vr === "d") {
+      if (!u) { o.motivo = "U = 0: o deságio não altera o resultado"; return o; }
+      d = dono != null ? 1 - (dono + cfb - s * y) / u : (mg + c * w - (1 - s) * y) / u; o.v = d;
+    } else {
+      if (Math.abs(y) < 1e-12) { o.motivo = "Y = 0: sem benefício fiscal, o VB não altera o resultado"; return o; }
+      s = dono != null ? (dono + cfb - (1 - d) * u) / y : 1 - (mg + c * w - d * u) / y; o.v = s;
+    }
+    var dn = (1 - d) * u + s * y - cfb, th = d * u + (1 - s) * y;
+    o.d = d; o.s = s; o.dono = dn; o.th = th; o.mg = th - c * w; o.dimp = u ? 1 - dn / u : null;
+    if (o.v < -1e-12 || o.v > 1 + 1e-12) o.motivo = (vr === "d" ? "deságio d" : "VB s") + " fora de 0 a 100%"; else o.ok = true;
+    return o;
+  }
+  // Projecao ano a ano: D, E e Fio B x (1 + reajuste)^t; % do Fio B pela Lei 14.300 (2029+ 100%) ou fixo; GD I = 0
+  function negProjecao(x, q, P) {
+    var anos = [], tot = {dono: 0, th: 0, mg: 0, mwh: 0, cfb: 0}, vpl = {dono: 0, th: 0, mg: 0};
+    for (var t = 0; t < P.prazo; t++) {
+      var ano = P.ano + t, f = Math.pow(1 + P.reaj, t), p = x.enq === 1 ? 0 : (P.esc ? escAno(ano) : x.pfb);
+      var r = calcArr(x.Dv * f, x.Ev * f, x.ic, x.pc, x.fte, x.ftu, x.s, x.d, x.c, x.fbS * f * p, x.fbCom);
+      var qa = q * Math.pow(1 - P.degr, t) * 12, a = {ano: ano, t: t, p: p, U: r.U, WI: r.WI, Y: r.Y, cfb: r.cfb, donoMwh: r.dono, mwh: qa,
+        dono: r.dono * qa, th: r.th * qa, mg: r.mg * qa, cfbAno: r.cfb * qa, dimp: r.dimp}, dsc = Math.pow(1 + P.taxa, t + 1);
+      anos.push(a);
+      tot.dono += a.dono; tot.th += a.th; tot.mg += a.mg; tot.mwh += qa; tot.cfb += a.cfbAno;
+      vpl.dono += a.dono / dsc; vpl.th += a.th / dsc; vpl.mg += a.mg / dsc;
+    }
+    return {anos: anos, tot: tot, vpl: vpl};
+  }
+  function negParams() {
+    var pr = Math.round(lerN("n-prazo") || 0), an = Math.round(lerN("n-ano") || 0);
+    return {prazo: Math.max(1, Math.min(50, pr || NG.prazo)), ano: an >= 2000 && an <= 2100 ? an : +String(D.meta.hoje).slice(0, 4),
+      reaj: (lerN("n-reaj") || 0) / 100, degr: (lerN("n-degr") || 0) / 100, taxa: (lerN("n-taxa") || 0) / 100, esc: $("n-esc").value === "1"};
+  }
+  function negLimpa(msg) {
+    negUlt = null;
+    ["n-kpis", "n-rev-ped", "n-rev-mg", "n-proj", "n-proj-kpis"].forEach(function (id) { $(id).innerHTML = ""; });
+    $("n-kpis").innerHTML = '<div class="card erro">' + esc(msg) + "</div>";
+    $("n-faixa-nota").textContent = ""; $("n-proj-nota").textContent = "";
+    if (graficos["g-neg"]) { graficos["g-neg"].destroy(); delete graficos["g-neg"]; }
+  }
+  function negRender() {
+    if (!negIni) { negIni = true; negMontaFaixa(); negPadroes(true); }
+    if (!arrUlt) { negLimpa("Informe TUSD e TE e alíquotas abaixo de 100% na configuração acima."); return; }
+    var r = arrUlt.r, x = arrUlt.x, G = arrUlt.G, q = G.comp, gd = ["", "GD I", "GD II", "GD III"][x.enq];
+    if (negPedAuto && !$("n-ped").value) { $("n-ped").value = escN(Math.round(r.dono * q * 1.1 / 100) * 100, 0); negPedAuto = false; }
+    var mes = function (v) { return brl(v * q) + "/mês"; };
+    // 1. proposta ao dono
+    var kp = [
+      ["Recebimento do dono", mes(r.dono), "R$ " + f2.format(r.dono) + "/MWh; " + brl(r.dono * q * 12) + "/ano", r.dono < 0],
+      ["% do valor total (dono / W_I)", pct2(r.WI ? r.dono / r.WI : null), "W_I = R$ " + f2.format(r.WI) + "/MWh (valor ao cliente com tributos evitados)", false],
+      ["% da tarifa sem tributos (dono / U)", pct2(r.U ? r.dono / r.U : null), "U = TUSD + TE = R$ " + f2.format(r.U) + "/MWh", false],
+      ["Deságio nominal / implícito", pct2(x.d) + " / " + pct2(r.dimp), "nominal só sobre U; implícito = 1 - dono / U, líquido do VB e do Fio B", false],
+      ["Fio B pago pelo dono", mes(r.cfb), "R$ " + f2.format(r.cfb) + "/MWh (" + gd + (x.enq === 1 ? ", sem Fio B" : ", " + pct2(x.pfb) + " do Fio B SCEE, " + (x.fbCom ? "com" : "sem") + " impostos") + ")", false]
+    ];
+    $("n-kpis").innerHTML = kp.map(function (k) { return '<div class="card kpi' + (k[3] ? " negativo" : "") + '"><div class="rot">' + esc(k[0]) + '</div><div class="val">' + esc(k[1]) + '</div><div class="sub">' + esc(k[2]) + "</div></div>"; }).join("");
+    // 2. calculo reverso
+    var vr = $("n-var").value, fixo = vr === "d" ? "VB s = " + pct2(x.s) : "deságio d = " + pct2(x.d);
+    var pv = lerN("n-ped"), pu = $("n-ped-u").value, mv = lerN("n-mmin"), mu = $("n-mmin-u").value;
+    var pedMwh = pv == null ? null : (pu === "mwh" ? pv : (q > 0 ? pv / q : null));
+    var mgMwh = mv == null ? null : (mu === "pct" ? mv / 100 * r.WI : (mu === "mwh" ? mv : (q > 0 ? mv / q : null)));
+    var linha = function (a, b, c) { return "<tr><td>" + esc(a) + "</td>" + td(b, c) + "</tr>"; };
+    var mgTxt = function (v) { return "R$ " + f2.format(v) + "/MWh; " + mes(v) + "; " + pct2(r.WI ? v / r.WI : null) + " de W_I"; };
+    var P1 = null, P2 = null;
+    $("n-ped-tit").textContent = "Pedido do dono: " + (vr === "d" ? "deságio necessário" : "VB necessário") + " (" + fixo + ")";
+    if (pedMwh == null) $("n-rev-ped").innerHTML = '<div class="erro">' + (pv != null && q <= 0 ? "Sem energia compensada: informe o pedido em R$/MWh." : "Informe o valor pedido pelo dono.") + "</div>";
+    else {
+      P1 = negResolver(r, x, vr, pedMwh, null);
+      var L1 = [linha("Pedido do dono", esc("R$ " + f2.format(pedMwh) + "/MWh; " + mes(pedMwh)))];
+      if (P1.v == null) L1.push(linha("Resultado", "Sem solução: " + esc(P1.motivo), "sem-sol"));
+      else {
+        L1.push(linha((vr === "d" ? "Deságio d necessário" : "VB s necessário"), "<b>" + esc(pct2(P1.v)) + "</b>" + (P1.ok ? "" : " (sem solução: " + esc(P1.motivo) + ")"), P1.ok ? "" : "sem-sol"));
+        L1.push(linha("Deságio implícito resultante", esc(pct2(P1.dimp))));
+        L1.push(linha("Margem líquida da Thopen", esc(mgTxt(P1.mg)), P1.mg < 0 ? "negativo" : ""));
+        var viav = P1.ok && (mgMwh == null || P1.mg >= mgMwh - 1e-9);
+        L1.push(linha("Viável?", P1.ok ? (mgMwh == null ? "sem margem mínima informada" : (viav ? "<b>Sim</b>, margem igual ou acima da mínima" :
+          "<b>Não</b>, margem abaixo da mínima em " + esc(mes(mgMwh - P1.mg)))) : "<b>Não</b>, sem solução", viav ? "" : "sem-sol"));
+      }
+      $("n-rev-ped").innerHTML = tabela(["Item", "Valor"], L1, "", "lado");
+    }
+    $("n-mg-tit").textContent = "Margem mínima da Thopen: " + (vr === "d" ? "deságio mínimo" : "VB máximo") + " e teto ao dono (" + fixo + ")";
+    if (mgMwh == null) $("n-rev-mg").innerHTML = '<div class="erro">' + (mv != null && q <= 0 ? "Sem energia compensada: informe a margem em R$/MWh ou % de W_I." : "Informe a margem mínima.") + "</div>";
+    else {
+      P2 = negResolver(r, x, vr, null, mgMwh);
+      var L2 = [linha("Margem mínima (líquida de c = " + pct2(x.c) + ")", esc(mgTxt(mgMwh)))];
+      if (P2.v == null) L2.push(linha("Resultado", "Sem solução: " + esc(P2.motivo), "sem-sol"));
+      else L2.push(linha(vr === "d" ? "Deságio d mínimo" : "VB s máximo", "<b>" + esc(pct2(P2.v)) + "</b>" + (P2.ok ? "" : " (sem solução: " + esc(P2.motivo) + ")"), P2.ok ? "" : "sem-sol"));
+      L2.push(linha("Pagamento máximo ao dono (teto)", "<b>" + esc("R$ " + f2.format(P2.dmax) + "/MWh; " + mes(P2.dmax) + "; " + brl(P2.dmax * q * 12) + "/ano") + "</b>", P2.dmax < 0 ? "negativo" : ""));
+      L2.push(linha("Deságio implícito correspondente", esc(pct2(r.U ? 1 - P2.dmax / r.U : null))));
+      L2.push(linha("Proposta atual x teto", esc("atual " + mes(r.dono) + "; " + (P2.dmax - r.dono >= 0 ? "folga de " + mes(P2.dmax - r.dono) : "acima do teto em " + mes(r.dono - P2.dmax)))));
+      $("n-rev-mg").innerHTML = tabela(["Item", "Valor"], L2, "", "lado");
+    }
+    // 3. faixa de negociacao
+    var lim = {d: x.d, s: x.s};
+    // limite arredondado a 0,01 p.p. para o lado seguro (d para cima, s para baixo): a margem fica >= a minima
+    if (P2 && P2.v != null) { var vl = Math.max(0, Math.min(1, P2.v));
+      if (vr === "d") lim.d = Math.min(1, Math.ceil(vl * 10000 - 1e-7) / 10000); else lim.s = Math.max(0, Math.floor(vl * 10000 + 1e-7) / 10000); }
+    var padr = {ab: {d: Math.min(1, x.d + NG.abertura), s: x.s}, al: {d: x.d, s: x.s}, li: lim}, FX = {};
+    NFX.forEach(function (c) {
+      var k = c[0], o = {};
+      ["d", "s"].forEach(function (z) { var id = "n-f-" + k + "-" + z;
+        if (!negFaixaEd[id]) $(id).value = escN(padr[k][z] * 100, 2);
+        var v = lerN(id); o[z] = v == null ? padr[k][z] : v / 100; });
+      var rr = calcArr(x.Dv, x.Ev, x.ic, x.pc, x.fte, x.ftu, o.s, o.d, x.c, x.fb, x.fbCom), abx = mgMwh != null && rr.mg < mgMwh - 1e-9;
+      FX[k] = {d: o.d, s: o.s, r: rr, abx: abx};
+      var put = function (z, v) { var e = $("n-f-" + k + "-" + z); e.textContent = v; e.className = "n" + (abx ? " abaixo" : ""); };
+      put("dmwh", num(rr.dono)); put("dmes", brl(rr.dono * q)); put("dimp", pct2(rr.dimp)); put("mmes", brl(rr.mg * q));
+      put("mpct", pct2(rr.WI ? rr.mg / rr.WI : null)); put("sit", mgMwh == null ? "-" : (abx ? "abaixo da margem mínima" : "ok"));
+      $("n-fh-" + k).className = abx ? "abaixo" : "";
+      ["d", "s"].forEach(function (z) { $("n-f-" + k + "-" + z).parentNode.className = "n" + (abx ? " abaixo" : ""); });
+    });
+    $("n-faixa-nota").textContent = "Abertura: deságio atual + " + f0.format(NG.abertura * 100) + " p.p.; Alvo: configuração atual; Limite: " +
+      (vr === "d" ? "deságio mínimo" : "VB máximo") + " da margem mínima, arredondado a 0,01 p.p. para o lado seguro" + (P2 && P2.v != null && !P2.ok ? " (sem solução em 0 a 100%: valor limitado à faixa)" : "") +
+      ". Edite d e s em qualquer coluna; em vermelho, margem abaixo da mínima. Recalcular faixa volta aos padrões.";
+    // 4. projecao
+    var P = negParams(), PJ = negProjecao(x, q, P), A = PJ.anos, ult = A[A.length - 1];
+    var kq = [
+      ["Dono no ano 1 (" + A[0].ano + ")", brl(A[0].dono / 12) + "/mês", brl(A[0].dono) + "/ano; R$ " + f2.format(A[0].donoMwh) + "/MWh"],
+      ["Dono no último ano (" + ult.ano + ")", brl(ult.dono / 12) + "/mês", brl(ult.dono) + "/ano; R$ " + f2.format(ult.donoMwh) + "/MWh"],
+      ["Total do contrato ao dono", brl(PJ.tot.dono), P.prazo + " anos; Thopen (margem líquida) " + brl(PJ.tot.mg)],
+      ["VPL do dono", brl(PJ.vpl.dono), "taxa de " + pct2(P.taxa) + " a.a., fluxos no fim de cada ano"],
+      ["VPL da Thopen (margem líquida)", brl(PJ.vpl.mg), "parte da Thopen antes do desconto: " + brl(PJ.vpl.th)]
+    ];
+    $("n-proj-kpis").innerHTML = kq.map(function (k) { return '<div class="card kpi"><div class="rot">' + esc(k[0]) + '</div><div class="val">' + esc(k[1]) + '</div><div class="sub">' + esc(k[2]) + "</div></div>"; }).join("");
+    var lin = A.map(function (a) { return "<tr><td>" + a.ano + "</td>" + td(pct2(a.p)) + td(num(a.U)) + td(num(a.Y)) + td(num(a.cfb)) + td(num(a.donoMwh), a.donoMwh < 0 ? "negativo" : "") +
+      td(f2.format(a.mwh)) + td(brl(a.dono), a.dono < 0 ? "negativo" : "") + td(brl(a.th)) + td(brl(a.mg), a.mg < 0 ? "negativo" : "") + td(pct2(a.dimp)) + "</tr>"; });
+    lin.push('<tr class="tot"><td>Total</td>' + td("") + td("") + td("") + td("") + td("") + td(f2.format(PJ.tot.mwh)) + td(brl(PJ.tot.dono)) + td(brl(PJ.tot.th)) + td(brl(PJ.tot.mg)) + td("") + "</tr>");
+    lin.push('<tr class="tot"><td>VPL ' + esc(pct2(P.taxa)) + " a.a.</td>" + td("") + td("") + td("") + td("") + td("") + td("") + td(brl(PJ.vpl.dono)) + td(brl(PJ.vpl.th)) + td(brl(PJ.vpl.mg)) + td("") + "</tr>");
+    $("n-proj").innerHTML = tabela(["Ano", "% Fio B", "U (R$/MWh)", "Y (R$/MWh)", "Fio B do dono (R$/MWh)", "Dono (R$/MWh)", "Energia compensada (MWh/ano)",
+      "Dono (R$/ano)", "Thopen (R$/ano)", "Margem líquida (R$/ano)", "Deságio implícito"], lin, "", "lado");
+    var nt = ["Ano a ano: D, E e Fio B SCEE x (1 + " + pct2(P.reaj) + ")^t" + (NG.ipca12 != null ? " (padrão: IPCA 12 meses, " + pct2(NG.ipca12) + ")" : "") +
+      "; tributos, flags, d = " + pct2(x.d) + ", s = " + pct2(x.s) + " e c = " + pct2(x.c) + " constantes; energia compensada x (1 - " + pct2(P.degr) + ")^t."];
+    if (x.enq === 1) nt.push("GD I: sem Fio B em todos os anos.");
+    else if (P.esc) nt.push("Fio B pela Lei 14.300: 2026 60%, 2027 75%, 2028 90%; a partir de 2029 a regra será definida pela ANEEL, aqui aproximada por 100%." + (A.length > 1 && A[1].donoMwh < A[0].donoMwh ? " A subida do % do Fio B reduz o recebimento do dono por MWh." : ""));
+    else nt.push("Fio B fixo em " + pct2(x.pfb) + " (escalonamento desligado).");
+    if (x.enq === 3) nt.push("GD III: só o Fio B é modelado; pela Lei 14.300 a usina paga ainda 40% do Fio A, TFSEE e P&D/EE.");
+    $("n-proj-nota").textContent = nt.join(" ");
+    grafico("g-neg", {type: "bar", data: {labels: A.map(function (a) { return String(a.ano); }), datasets: [
+      {label: "Dono (R$/ano)", data: A.map(function (a) { return a.dono; }), backgroundColor: "#2F5597"},
+      {label: "Thopen, margem líquida (R$/ano)", data: A.map(function (a) { return a.mg; }), backgroundColor: "#E07B39"}]},
+      options: {responsive: true, maintainAspectRatio: false, locale: "pt-BR", plugins: {legend: {position: "bottom", labels: {boxWidth: 14}},
+        tooltip: {callbacks: {label: function (c) { return c.dataset.label + ": " + brl(c.parsed.y); }}}},
+        scales: {y: eixoY(function (v) { return "R$ " + f0.format(v); }), x: {grid: {display: false}}}}});
+    negUlt = {r: r, x: x, G: G, q: q, P1: P1, P2: P2, pedMwh: pedMwh, mgMwh: mgMwh, vr: vr, FX: FX, P: P, PJ: PJ, gd: gd};
+  }
+  function negUsina() {
+    var G = arrUlt.G, tp = G.tp, nome = $("a-usina").value.trim();
+    var u = tp === "ufv" ? "UFV de " + f2.format((lerN("a-kwp") || 0) / 1000) + " MWp" : (tp === "cgh" ? "CGH de " + f2.format((lerN("a-kw") || 0) / 1000) + " MW" : "usina com geração informada");
+    return (nome ? nome + ", " : "") + u + ", geração média de " + f2.format(G.ger) + " MWh/mês";
+  }
+  function negAnoTxt(A, k) { var a = A[k - 1]; return a ? "ano " + k + " (" + a.ano + "): R$ " + f2.format(a.dono) + "/ano (R$ " + f2.format(a.dono / 12) + "/mês)" : null; }
+  function negProposta() {
+    if (!negUlt) return "";
+    var n = negUlt, x = n.x, i = I[arrDist] || {}, A = n.PJ.anos, P = n.P;
+    var ev = [negAnoTxt(A, 1), negAnoTxt(A, 3), negAnoTxt(A, 5)].filter(Boolean);
+    var fb = x.enq === 1 ? "sem Fio B (GD I)" : (P.esc ? "Fio B pago pelo proprietário conforme o escalonamento da Lei 14.300 (60% em 2026, 75% em 2027, 90% em 2028 e 100% a partir de 2029, aproximação)" : "Fio B pago pelo proprietário fixo em " + pct2(x.pfb));
+    return [
+      "Proposta de arrendamento",
+      "Usina: " + negUsina(),
+      "Distribuidora: " + arrDist + (i.uf ? " (" + i.uf + ")" : "") + "; modalidade " + n.gd,
+      "Condições: deságio de " + pct2(x.d) + " sobre a tarifa sem tributos (TUSD + TE) e VB de " + pct2(x.s) + " do benefício fiscal ao proprietário",
+      "Valor ao proprietário no ano 1 (" + A[0].ano + "): R$ " + f2.format(A[0].donoMwh) + "/MWh compensado, cerca de R$ " + f2.format(A[0].dono / 12) + "/mês",
+      "Evolução prevista: " + ev.join("; ") + "; total em " + P.prazo + " anos: R$ " + f2.format(n.PJ.tot.dono),
+      "Premissas: estimativa com as tarifas ANEEL vigentes e tributos médios das faturas, sem bandeiras, CIP nem custo de disponibilidade; reajuste anual da tarifa de " + pct2(P.reaj) +
+        "; " + fb + (P.degr ? "; degradação da geração de " + pct2(P.degr) + " ao ano" : "") + ". Os valores dependem da energia efetivamente compensada."
+    ].join("\n");
+  }
+  function negInterna() {
+    if (!negUlt) return "";
+    var n = negUlt, x = n.x, r = n.r, q = n.q, P2 = n.P2, P1 = n.P1, PJ = n.PJ, nv = n.vr === "d" ? "deságio d" : "VB s";
+    var m = function (v) { return "R$ " + f2.format(v * q) + "/mês"; };
+    var L = [negProposta(), "", "Análise interna (não enviar ao proprietário)",
+      "Configuração atual: d " + pct2(x.d) + ", s " + pct2(x.s) + ", c " + pct2(x.c) + "; dono R$ " + f2.format(r.dono) + "/MWh (" + m(r.dono) + "); margem líquida Thopen R$ " + f2.format(r.mg) + "/MWh (" + m(r.mg) + ", " + pct2(r.WI ? r.mg / r.WI : null) + " de W_I)"];
+    if (P2) L.push("Margem mínima: R$ " + f2.format(n.mgMwh) + "/MWh (" + m(n.mgMwh) + ", " + pct2(r.WI ? n.mgMwh / r.WI : null) + " de W_I); " +
+      (P2.v == null ? "sem solução (" + P2.motivo + ")" : (n.vr === "d" ? "deságio mínimo " : "VB máximo ") + pct2(P2.v) + (P2.ok ? "" : " (sem solução: " + P2.motivo + ")")) +
+      "; pagamento máximo ao dono R$ " + f2.format(P2.dmax) + "/MWh (" + m(P2.dmax) + ")");
+    if (P1) L.push("Pedido do dono: R$ " + f2.format(n.pedMwh) + "/MWh (" + m(n.pedMwh) + "); " +
+      (P1.v == null ? "sem solução (" + P1.motivo + ")" : nv + " necessário " + pct2(P1.v) + (P1.ok ? "" : " (sem solução)") + "; margem Thopen " + m(P1.mg) + " (" + pct2(r.WI ? P1.mg / r.WI : null) + " de W_I)" +
+        (n.mgMwh != null && P1.ok ? (P1.mg >= n.mgMwh - 1e-9 ? "; viável" : "; abaixo da margem mínima") : "")));
+    L.push("Faixa: " + NFX.map(function (c) { var f = n.FX[c[0]]; return c[1] + " d " + pct2(f.d) + ", s " + pct2(f.s) + ", dono " + m(f.r.dono) + ", margem " + m(f.r.mg) + (f.abx ? " (abaixo da mínima)" : ""); }).join("; "));
+    L.push("Projeção " + n.P.prazo + " anos: total dono R$ " + f2.format(PJ.tot.dono) + ", total margem Thopen R$ " + f2.format(PJ.tot.mg) + "; VPL a " + pct2(n.P.taxa) + " a.a.: dono R$ " + f2.format(PJ.vpl.dono) + ", Thopen (margem líquida) R$ " + f2.format(PJ.vpl.mg));
+    return L.join("\n");
+  }
+  function copiarTexto(b, txt, rotOk) {
+    if (!txt) return; var orig = b.textContent;
+    function ok() { b.textContent = rotOk; setTimeout(function () { b.textContent = orig; }, 1800); }
+    function alt() { var ta = document.createElement("textarea"); ta.value = txt; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); ok(); } catch (e) { window.prompt("Copie o texto:", txt); } document.body.removeChild(ta); }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(ok, alt); else alt();
+  }
+  $("n-copiar").addEventListener("click", function () { copiarTexto($("n-copiar"), negProposta(), "Proposta copiada"); });
+  $("n-copiar-int").addEventListener("click", function () { copiarTexto($("n-copiar-int"), negInterna(), "Análise copiada"); });
+  ["n-ped", "n-mmin", "n-prazo", "n-ano", "n-reaj", "n-degr", "n-taxa"].forEach(function (id) { $(id).addEventListener("input", negRender); });
+  ["n-var", "n-ped-u", "n-mmin-u", "n-esc"].forEach(function (id) { $(id).addEventListener("change", negRender); });
+  $("n-faixa-reset").addEventListener("click", function () { negFaixaEd = {}; negRender(); });
+  $("a-data").addEventListener("change", function () { $("n-ano").value = String($("a-data").value || D.meta.hoje).slice(0, 4); negRender(); });
+  $("a-tipo").addEventListener("change", function () { $("n-degr").value = escN((NG.degr[$("a-tipo").value] || 0) * 100, 2); negRender(); });
+  $("a-reset").addEventListener("click", function () { negPadroes(true); negRender(); });
 
   // ================= TABELA THOPEN (replica a planilha Tarifas.xlsx com a tarifa ANEEL vigente)
   var tEnq = 1, tOrd = {k: 0, asc: true};
