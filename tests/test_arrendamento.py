@@ -27,7 +27,7 @@ def referencia(D, E, i, pc, fte, ftu, d, s, c=0.0, fb_ef=0.0, fb_com_impostos=Tr
     dono = (1 - d) * U + s * Y - custo_fb
     thopen = d * U + (1 - s) * Y
     return {"U": U, "W_I": W_I, "Y": Y, "custo_fb": custo_fb, "dono": dono, "thopen": thopen,
-            "margem": thopen - c * W_I, "desagio_ef": 1 - dono / W_I}
+            "margem": thopen - c * W_I, "desagio_impl": 1 - dono / U}
 
 
 def _r2(v):
@@ -43,7 +43,7 @@ def test_cpfl_paulista_gd1():
     assert abs(r["dono"] + r["thopen"] - r["W_I"]) < 1e-9
     assert round(_r2(r["dono"]) + _r2(r["thopen"]), 2) == 845.42
     ref = referencia(449.25, 290.20, 0.18, 0.05, 1, 0, 0.3, 0.5)
-    for k in ("U", "W_I", "Y", "dono", "thopen", "desagio_ef"):
+    for k in ("U", "W_I", "Y", "dono", "thopen", "desagio_impl"):
         assert abs(r[k] - ref[k]) < 1e-9, k
 
 
@@ -73,6 +73,51 @@ def test_w_i_igual_calculadora_gd1():
     g = mt.calc_gd(449.25, 290.20, 0.18, 0.05, 1, 0, 0.5)
     r = mt.calc_arrendamento(449.25, 290.20, 0.18, 0.05, 1, 0, s=0.5, d=0.3, fb_ef=50.0)
     assert abs(r["W_I"] - g["W"]) < 1e-12 and abs(r["Y"] - g["Y"]) < 1e-12  # W_I nao depende do Fio B
+
+
+# Enel SP (vigencia atual do painel em 24/11/2026): TUSD, TE, Fio B SCEE, ICMS, PIS+COFINS e flags 1/0
+ENEL = dict(tusd=472.42, te=316.96, icms=0.18, pc=0.00945 + 0.04369, flag_te=1, flag_tusd=0)
+ENEL_FB_EF = 212.0774 * 0.6  # GD II 2026: 60% do Fio B SCEE
+
+
+def test_desagio_implicito_cpfl_s50_s70():
+    a = mt.calc_arrendamento(449.25, 290.20, icms=0.18, pc=0.05, flag_te=1, flag_tusd=0, s=0.5, d=0.3)
+    b = mt.calc_arrendamento(449.25, 290.20, icms=0.18, pc=0.05, flag_te=1, flag_tusd=0, s=0.7, d=0.3)
+    assert _r2(a["dono"]) == 570.60 and _r2(b["dono"]) == 591.80, (a["dono"], b["dono"])
+    assert abs(a["desagio_impl"] - (1 - a["dono"] / a["U"])) < 1e-12
+    assert round(a["desagio_impl"] * 100, 2) == 22.83, a["desagio_impl"]   # 1 - 570,60 / 739,45
+    assert round(b["desagio_impl"] * 100, 2) == 19.97, b["desagio_impl"]   # 1 - 591,80 / 739,45 (Y exato 105,9733)
+    assert b["desagio_impl"] < a["desagio_impl"]  # mais VB para o dono, menor desagio implicito
+    assert a["d"] == b["d"] == 0.3  # o nominal nao muda
+
+
+def test_desagio_implicito_enel_sp_gd2():
+    a = mt.calc_arrendamento(**ENEL, s=0.5, d=0.3, fb_ef=ENEL_FB_EF)
+    b = mt.calc_arrendamento(**ENEL, s=0.7, d=0.3, fb_ef=ENEL_FB_EF)
+    assert _r2(a["U"]) == 789.38
+    assert _r2(a["dono"]) == 447.57 and _r2(b["dono"]) == 471.13, (a["dono"], b["dono"])
+    assert round(a["desagio_impl"] * 100, 2) == 43.30, a["desagio_impl"]
+    assert round(b["desagio_impl"] * 100, 2) == 40.32, b["desagio_impl"]
+    g1 = mt.calc_arrendamento(**ENEL, s=0.5, d=0.3)  # sem Fio B: implicito menor
+    assert g1["desagio_impl"] < a["desagio_impl"]
+
+
+def test_desagio_implicito_negativo():
+    r = mt.calc_arrendamento(449.25, 290.20, icms=0.18, pc=0.05, flag_te=1, flag_tusd=0, s=1.0, d=0.0)
+    assert abs(r["dono"] - r["W_I"]) < 1e-9  # dono fica com tudo
+    assert r["desagio_impl"] < 0 and abs(r["desagio_impl"] - (1 - r["W_I"] / r["U"])) < 1e-12
+    assert round(r["desagio_impl"] * 100, 2) == -14.33, r["desagio_impl"]  # 1 - 845,42 / 739,45
+
+
+def test_desagio_implicito_varia_com_s_na_grade():
+    for d in mt.ARR_GRADE_D:
+        v = [mt.calc_arrendamento(**ENEL, s=s, d=d, fb_ef=ENEL_FB_EF)["desagio_impl"] for s in mt.ARR_GRADE_S]
+        assert all(x > y for x, y in zip(v, v[1:])), (d, v)
+
+
+def test_u_zero_nao_quebra():
+    r = mt.calc_arrendamento(0.0, 0.0, 0.18, 0.05, 1, 1)
+    assert r["desagio_impl"] is None
 
 
 def test_geracao():

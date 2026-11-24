@@ -40,7 +40,8 @@ def test_gd2_identidades():
     assert abs(c["Y"] - (c["W"] - (c["U"] - fb))) < 1e-9
     assert abs(c["Z"] - ((c["U"] - fb) + 0.5 * c["Y"])) < 1e-9
     assert abs(c["fb_res"] - fb * c["k_full"]) < 1e-9
-    assert abs(c["desagio"] - (1 - 500.0 / c["W"])) < 1e-12 and abs(c["economia"] - (c["W"] - 500.0)) < 1e-9
+    # desagio sobre U (tarifa sem tributos, mesma base do Arrendamento); economia do cliente = W - P
+    assert abs(c["desagio"] - (1 - 500.0 / c["U"])) < 1e-12 and abs(c["economia"] - (c["W"] - 500.0)) < 1e-9
     assert mt.escalonamento_ano(2026) == 0.6 and mt.escalonamento_ano(2022) == 0 and mt.escalonamento_ano(2030) == 1.0
 
 
