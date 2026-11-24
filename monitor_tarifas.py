@@ -2137,6 +2137,15 @@ def textos_arrendamento() -> list[str]:
         "(1.000 x P_t + custo_FioB_t - s x Y_t) / U_t; como o % do Fio B sobe pela Lei 14.300, d_t cai e a parte da "
         "Thopen cai. Pedido do dono no calculo reverso tambem em R$/kWh (x 1.000 = R$/MWh). Excel, aba Arrendamento "
         "(referencia): V tarifa com impostos e, por GD, preco ao dono em R$/kWh e desagio sobre V.",
+        "Exportacao da simulacao (visao de negociacao, tudo no navegador, sem servidor): 'Exportar Excel' gera "
+        "Arrendamento_<distribuidora>_<GD>_<data>.xlsx com as abas Premissas, Tarifas, Resultado, Negociacao, Projecao "
+        "e Memoria de calculo, com numeros como celulas numericas (biblioteca SheetJS carregada no primeiro clique). "
+        "'PDF proposta' abre um relatorio A4 para o proprietario (usina, distribuidora, modalidade, condicoes, valor em "
+        "R$/kWh, R$/MWh, R$/mes e R$/ano, desagios sobre a tarifa sem e com impostos, evolucao por ano e premissas), "
+        "montado de uma lista fechada de campos, sem margem, parte da Thopen, limite, faixa nem desconto ao cliente. "
+        "'PDF analise interna' traz tudo (premissas, tarifas, resultado, negociacao com a faixa e o aviso, projecao com "
+        "VPL e grafico, memoria de calculo), marcado como uso interno. Nos dois, salvar como PDF na janela de impressao. "
+        "Sem simulacao valida, os botoes mostram um aviso em vez de exportar.",
     ]
 
 
@@ -3228,7 +3237,11 @@ a{color:var(--azul2)}
   <section class="card" id="n-sec">
     <div class="barra"><h2 style="margin:0">Visão de negociação</h2><span class="esp"></span>
       <button class="btn" id="n-copiar">Copiar proposta</button>
-      <button class="btn" id="n-copiar-int">Copiar análise interna</button></div>
+      <button class="btn" id="n-copiar-int">Copiar análise interna</button>
+      <button class="btn" id="n-xlsx" title="Planilha .xlsx com premissas, tarifas, resultado, negociação, projeção e memória de cálculo">Exportar Excel</button>
+      <button class="btn" id="n-pdf-prop" title="Relatório para o proprietário da usina, sem dados internos (salvar como PDF na janela de impressão)">PDF proposta</button>
+      <button class="btn" id="n-pdf-int" title="Relatório completo de uso interno (salvar como PDF na janela de impressão)">PDF análise interna</button></div>
+    <div class="nota-sim alerta" id="n-exp-msg" style="display:none"></div>
     <div class="mut">Usa a configuração acima (distribuidora, enquadramento, tributos, deságio, VB, desconto ao cliente e geração). Valores por MWh compensado, convertidos para mês e ano com a energia compensada.</div>
     <h3>Proposta ao dono (configuração atual)</h3>
     <div class="grid kpis" id="n-kpis"></div>
@@ -4523,6 +4536,7 @@ a{color:var(--azul2)}
       ["Geração média (MWh/mês)", G.tp === "ufv" ? "kWp x kWh/kWp/ano / 12 x (1 - perdas)" : (G.tp === "cgh" ? "kW x FC x " + f0.format(AR.horas) + " h" : "informada"), G.calc, f3(G.ger)],
       ["Energia compensada (MWh/mês)", "geração x % compensada", f3(G.ger) + " x " + pct2(G.pc), f3(q)]
     ];
+    arrUlt.mem = L;  // linhas da memoria de calculo, reaproveitadas na exportacao
     $("a-mem").innerHTML = tabela(["Passo", "Fórmula", "Cálculo", "Valor"], L.map(function (l) {
       return "<tr><td>" + esc(l[0]) + "</td><td>" + esc(l[1]) + "</td><td>" + esc(l[2]) + "</td>" + td("<b>" + esc(l[3]) + "</b>") + "</tr>"; }), "", "lado");
     var ano = +String($("a-data").value || D.meta.hoje).slice(0, 4), notas = ["Valores por MWh compensado. TUSD, TE e Fio B vêm da vigência atual; a data de referência só define o % da Lei 14.300."];
@@ -4550,6 +4564,7 @@ a{color:var(--azul2)}
     ];
     var h = L.map(function (l) { return "<tr><td>" + esc(l[0]) + (l[2] ? ' <span class="mut">(' + esc(l[2]) + ")</span>" : "") + "</td>" + td(f4k(l[1]), l[1] < 0 ? "negativo" : "") + td(num(l[1])) + "</tr>"; });
     var tx = function (a, v, fonte) { return "<tr><td>" + esc(a) + (fonte ? ' <span class="mut">(' + esc(fonte) + ")</span>" : "") + '</td><td class="n" colspan="2">' + esc(pct2(v)) + "</td></tr>"; };
+    if (arrUlt) arrUlt.tar = {L: L, tx: [["ICMS", x.ic, t.fi || ""], ["PIS + COFINS", x.pc, t.fp || ""]]};  // para a exportacao
     h.push(tx("ICMS", x.ic, t.fi)); h.push(tx("PIS + COFINS", x.pc, t.fp));
     h.push(tx("Deságio sobre a tarifa sem impostos (1 - dono / tarifa sem impostos)", r.dimp)); h.push(tx("Deságio sobre a tarifa com impostos (1 - dono / tarifa com impostos)", r.dV));
     h.push(tx("Deságio sobre o valor compensado (1 - dono / valor compensado, referência)", r.dWI));
@@ -4827,7 +4842,8 @@ a{color:var(--azul2)}
       options: {responsive: true, maintainAspectRatio: false, locale: "pt-BR", plugins: {legend: {position: "bottom", labels: {boxWidth: 14}},
         tooltip: {callbacks: {label: function (c) { return c.dataset.label + ": " + brl(c.parsed.y); }}}},
         scales: {y: eixoY(function (v) { return "R$ " + f0.format(v); }), x: {grid: {display: false}}}}});
-    negUlt = {r: r, x: x, G: G, q: q, P1: P1, P2: P2, pedMwh: pedMwh, mgMwh: mgMwh, vr: vr, FX: FX, NFX: NFX, exc: exc, P: P, PJ: PJ, gd: gd};
+    negUlt = {r: r, x: x, G: G, q: q, P1: P1, P2: P2, pedMwh: pedMwh, mgMwh: mgMwh, vr: vr, FX: FX, NFX: NFX, exc: exc, P: P, PJ: PJ, gd: gd,
+      acima: acima, mv: mv, mu: mu, pv: pv, pu: pu};
   }
   function negUsina() {
     var G = arrUlt.G, tp = G.tp, nome = $("a-usina").value.trim();
@@ -4889,6 +4905,342 @@ a{color:var(--azul2)}
   $("a-data").addEventListener("change", function () { $("n-ano").value = String($("a-data").value || D.meta.hoje).slice(0, 4); negRender(); });
   $("a-tipo").addEventListener("change", function () { $("n-degr").value = escN((NG.degr[$("a-tipo").value] || 0) * 100, 2); negRender(); });
   $("a-reset").addEventListener("click", function () { negPadroes(true); negRender(); });
+
+  // ================= EXPORTACAO: Excel (SheetJS, carregado no primeiro clique) e relatorios para PDF (janela de impressao)
+  // Tudo sai de arrUlt (r, x, G, tar, mem) e negUlt (calculo reverso, faixa e projecao): nada e recalculado aqui.
+  var XLSX_URL = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js", xlsxCarga = null;
+  var EXP_FMT = {brl: '"R$" #,##0.00', rkwh: '"R$" #,##0.0000', pct: "0.00%", n2: "#,##0.00", n4: "#,##0.0000", n6: "0.000000", int: "0"};
+  var EXP_SEM = "Sem simulação válida para exportar: informe TUSD, TE, alíquotas abaixo de 100% e o deságio ou o preço ao parceiro na configuração acima.";
+  var EXP_PREMISSAS = "Estimativa com as tarifas ANEEL vigentes e os tributos médios das faturas; sem bandeiras, sem CIP e sem custo de disponibilidade; sem inadimplência, O&M, seguros ou tributos sobre a receita do arrendamento.";
+  function C(v, t) { return v == null || !isFinite(v) ? "-" : {v: +v, t: t}; }  // celula numerica com formato
+  function expTxt(c) {  // celula -> texto no formato brasileiro (PDF)
+    if (c == null) return "";
+    if (typeof c !== "object") return String(c);
+    var v = c.v;
+    switch (c.t) {
+      case "brl": return "R$ " + f2.format(v);
+      case "rkwh": return "R$ " + f4.format(v);
+      case "pct": return pct2(v);
+      case "n4": return f4.format(v);
+      case "n6": return f6.format(v);
+      case "int": return String(Math.round(v));
+      default: return f2.format(v);
+    }
+  }
+  function expBrNum(s) {  // valor da memoria de calculo ("1.234,56", "0,123456", "12,34%") -> celula numerica; o resto fica texto
+    var t = String(s == null ? "" : s).replace(/−/g, "-").trim(), p = /%$/.test(t), b = p ? t.slice(0, -1) : t;
+    var m = /^-?[\d.]*\d,(\d+)$/.exec(b); if (!m) return t;
+    var v = parseFloat(b.replace(/\./g, "").replace(",", ".")); if (!isFinite(v)) return t;
+    if (p) return {v: v / 100, t: "pct"};
+    return {v: v, t: m[1].length >= 6 ? "n6" : (m[1].length >= 4 ? "n4" : "n2")};
+  }
+  function expOk() { return !!(arrUlt && negUlt && arrUlt.mem && arrUlt.tar); }
+  function expMsg(txt) {
+    var e = $("n-exp-msg"); e.textContent = txt || ""; e.style.display = txt ? "" : "none";
+    if (txt) setTimeout(function () { if (e.textContent === txt) { e.textContent = ""; e.style.display = "none"; } }, 8000);
+  }
+  function expAgora() { var d = new Date(); return d.toLocaleDateString("pt-BR") + " " + d.toLocaleTimeString("pt-BR", {hour: "2-digit", minute: "2-digit"}); }
+
+  // Estrutura comum ao Excel e ao PDF de analise interna: secoes > blocos {tit, cab, linhas, nota, aviso, graf}
+  function expDados() {
+    var n = negUlt, r = arrUlt.r, x = arrUlt.x, G = arrUlt.G, q = G.comp, m = M[arrDist] || {}, i = I[arrDist] || {};
+    var P = n.P, PJ = n.PJ, A = PJ.anos, mp = x.modo === "p", tp = G.tp, S = [];
+    var porWI = function (v) { return v == null || !r.WI ? null : v / r.WI; };
+    // 1. Premissas
+    var pr = [["Distribuidora", arrDist], ["UF", i.uf || "-"], ["Modalidade", n.gd],
+      ["Vigência atual da tarifa (B3)", m.ini ? dataBr(m.ini) + " a " + dataBr(m.fim) + (m.reh ? " (" + m.reh + ")" : "") : "sem tarifa B3 no painel"],
+      ["Vigência do Fio B SCEE", m.fbi ? "desde " + dataBr(m.fbi) + (m.fbr ? " (" + m.fbr + ")" : "") : "sem Fio B SCEE"],
+      ["Data de referência", dataBr($("a-data").value || D.meta.hoje)],
+      ["Usina", negUsina()],
+      ["Tipo de geração", {ufv: "UFV (kWp x produtividade)", cgh: "CGH ou outra (kW x fator de capacidade)", direto: "MWh/mês informado"}[tp] || tp]];
+    if (tp === "ufv") pr.push(["Potência (kWp)", C(lerN("a-kwp"), "n2")], ["Produtividade (kWh/kWp/ano)", C(lerN("a-prod"), "n2")], ["Perdas / degradação", C((lerN("a-perdas") || 0) / 100, "pct")]);
+    else if (tp === "cgh") pr.push(["Potência (kW)", C(lerN("a-kw"), "n2")], ["Fator de capacidade", C((lerN("a-fc") || 0) / 100, "pct")]);
+    pr.push(["Geração média (MWh/mês)", C(G.ger, "n2")], ["% da geração compensada", C(G.pc, "pct")],
+      ["Energia compensada (MWh/mês)", C(q, "n2")], ["Energia compensada (MWh/ano)", C(q * 12, "n2")],
+      ["Condições definidas por", mp ? "preço ao parceiro (R$/kWh)" : "deságio nominal (%)"],
+      [mp ? "Deságio nominal equivalente (sobre a tarifa sem impostos)" : "Deságio nominal (sobre a tarifa sem impostos)", C(x.d, "pct")],
+      ["Preço ao parceiro (R$/kWh, líquido do Fio B)" + (mp ? ", informado" : ", resultante"), C(mp ? x.P : r.pk, "rkwh")],
+      ["VB do dono (parte do benefício fiscal para o dono)", C(x.s, "pct")],
+      ["Desconto ao cliente (% do valor compensado)", C(x.c, "pct")],
+      ["TUSD (R$/MWh)", C(x.Dv, "n2")], ["TE (R$/MWh)", C(x.Ev, "n2")], ["Fio B SCEE (R$/MWh)", C(x.fbS, "n2")],
+      ["% do Fio B pago (Lei 14.300)", C(x.enq === 1 ? 0 : x.pfb, "pct")],
+      ["Custo do Fio B para o dono", x.fbCom ? "com impostos (Fio B efetivo x fator de impostos)" : "sem impostos (Fio B efetivo)"],
+      ["Custo do Fio B com impostos (R$/MWh)", C(r.cfbC, "n2")], ["Custo do Fio B sem impostos (R$/MWh)", C(r.cfbS, "n2")],
+      ["ICMS", C(x.ic, "pct")], ["PIS/COFINS", C(x.pc, "pct")],
+      ["ICMS da TE na energia compensada", x.fte ? "sim" : "não"], ["ICMS da TUSD na energia compensada", x.ftu ? "sim" : "não"],
+      ["Variável do cálculo reverso", n.vr === "d" ? "deságio nominal (VB do dono fixo)" : "VB do dono (deságio nominal fixo)"],
+      ["Pedido do dono (R$/MWh)", C(n.pedMwh, "n2")],
+      ["Margem mínima da Thopen (R$/MWh, líquida do desconto ao cliente)", C(n.mgMwh, "n2")],
+      ["Margem mínima da Thopen (% do valor compensado)", C(porWI(n.mgMwh), "pct")],
+      ["Prazo do contrato (anos)", C(P.prazo, "int")], ["Ano de início", C(P.ano, "int")],
+      ["Reajuste anual da tarifa", C(P.reaj, "pct")], ["Degradação anual da geração", C(P.degr, "pct")],
+      ["Taxa de desconto do VPL (a.a.)", C(P.taxa, "pct")],
+      ["Fio B pelo escalonamento da Lei 14.300", P.esc ? "sim (60, 75, 90 e 100%)" : "não (% fixo informado)"],
+      ["Mantido fixo ao longo do contrato", P.fixo === "p" ? "preço (R$/kWh, reajustado pelo índice)" : "deságio nominal (do ano 1)"],
+      ["Data de geração", expAgora()],
+      ["Nota de premissas", EXP_PREMISSAS]);
+    var nota = $("a-nota").textContent;
+    S.push({nome: "Premissas", tit: "Premissas da simulação", blocos: [{cab: ["Campo", "Valor"], linhas: pr, nota: nota}]});
+    // 2. Tarifas da distribuidora
+    var T = arrUlt.tar;
+    S.push({nome: "Tarifas", tit: "Tarifas da distribuidora", blocos: [
+      {cab: ["Item", "Observação", "R$/kWh", "R$/MWh"], linhas: T.L.map(function (l) { return [l[0], l[2] || "", C(l[1] == null ? null : l[1] / 1000, "rkwh"), C(l[1], "n2")]; })},
+      {tit: "Tributos e deságios do dono", cab: ["Item", "Fonte", "Valor"], linhas: T.tx.map(function (l) { return [l[0], l[2] || "padrão do painel", C(l[1], "pct")]; }).concat([
+        ["Deságio sobre a tarifa sem impostos (1 - dono / tarifa sem impostos)", "", C(r.dimp, "pct")],
+        ["Deságio sobre a tarifa com impostos (1 - dono / tarifa com impostos)", "", C(r.dV, "pct")],
+        ["Deságio sobre o valor compensado (1 - dono / valor compensado, referência)", "", C(r.dWI, "pct")]]),
+        nota: $("a-tar-nota").textContent}]});
+    // 3. Resultado (cards e quadro de resultados)
+    var val = function (rot, v) { return [rot, C(v / 1000, "rkwh"), C(v, "n2"), C(v * q, "brl"), C(v * q * 12, "brl")]; };
+    S.push({nome: "Resultado", tit: "Resultado", blocos: [
+      {tit: "Valores por MWh compensado, por mês e por ano", cab: ["Item", "R$/kWh", "R$/MWh", "Por mês (R$)", "Por ano (R$)"], linhas: [
+        val("Preço ao parceiro (pagamento ao dono, líquido do Fio B)", r.dono),
+        val("Parte da Thopen", r.th),
+        val("Margem líquida da Thopen (após o desconto ao cliente)", r.mg),
+        val("Valor compensado na conta do cliente (com tributos evitados)", r.WI),
+        val("Custo do Fio B (pago pelo dono, " + (x.fbCom ? "com" : "sem") + " impostos)", r.cfb),
+        val("Desconto ao cliente final", r.desc),
+        val("Tarifa sem impostos (TUSD + TE)", r.U),
+        val("Tarifa com impostos", r.V)]},
+      {tit: "Deságios e percentuais", cab: ["Item", "Valor"], linhas: [
+        ["Deságio sobre a tarifa sem impostos (TUSD + TE)", C(r.dimp, "pct")],
+        ["Deságio sobre a tarifa com impostos (ICMS, PIS e COFINS)", C(r.dV, "pct")],
+        ["Deságio sobre o valor compensado na conta do cliente", C(r.dWI, "pct")],
+        [mp ? "Deságio nominal equivalente" : "Deságio nominal", C(x.d, "pct")],
+        ["VB do dono", C(x.s, "pct")],
+        ["Parte do benefício fiscal que fica com a Thopen", C(1 - x.s, "pct")],
+        ["Margem líquida da Thopen (% do valor compensado)", C(porWI(r.mg), "pct")]]},
+      {tit: "Energia", cab: ["Item", "Por mês (MWh)", "Por ano (MWh)"], linhas: [
+        ["Geração média", C(G.ger, "n2"), C(G.ger * 12, "n2")], ["Energia compensada", C(q, "n2"), C(q * 12, "n2")]]}]});
+    // 4. Negociacao
+    var bl = [], nv = n.vr === "d" ? "deságio nominal" : "VB do dono", P1 = n.P1, P2 = n.P2;
+    bl.push({tit: "Margem mínima da Thopen (líquida do desconto ao cliente de " + pct2(x.c) + ")", cab: ["Item", "R$/MWh", "R$/mês", "% do valor compensado"],
+      linhas: [n.mgMwh == null ? ["Margem mínima", "não informada", "", ""] : ["Margem mínima", C(n.mgMwh, "n2"), C(n.mgMwh * q, "brl"), C(porWI(n.mgMwh), "pct")]]});
+    var L1 = [];
+    if (!P1) L1.push(["Pedido do dono", "não informado"]);
+    else {
+      L1.push(["Pedido do dono (R$/kWh)", C(n.pedMwh / 1000, "rkwh")], ["Pedido do dono (R$/MWh)", C(n.pedMwh, "n2")], ["Pedido do dono (R$/mês)", C(n.pedMwh * q, "brl")]);
+      if (P1.v == null) L1.push(["Resultado", "sem solução: " + P1.motivo]);
+      else {
+        L1.push([nv.charAt(0).toUpperCase() + nv.slice(1) + " necessário", C(P1.v, "pct")]);
+        if (!P1.ok) L1.push(["Observação", "sem solução: " + P1.motivo]);
+        L1.push(["Deságio sobre a tarifa sem impostos", C(P1.dimp, "pct")], ["Deságio sobre a tarifa com impostos", C(r.V ? 1 - P1.dono / r.V : null, "pct")],
+          ["Margem líquida da Thopen (R$/MWh)", C(P1.mg, "n2")], ["Margem líquida da Thopen (R$/mês)", C(P1.mg * q, "brl")], ["Margem líquida da Thopen (% do valor compensado)", C(porWI(P1.mg), "pct")],
+          ["Viável?", P1.ok ? (n.mgMwh == null ? "sem margem mínima informada" : (P1.mg >= n.mgMwh - 1e-9 ? "sim, margem igual ou acima da mínima" : "não, margem abaixo da mínima em " + brl((n.mgMwh - P1.mg) * q) + "/mês")) : "não, sem solução"]);
+      }
+    }
+    bl.push({tit: "Cálculo reverso: pedido do dono (" + nv + " necessário)", cab: ["Item", "Valor"], linhas: L1});
+    var L2 = [];
+    if (!P2) L2.push(["Margem mínima", "não informada"]);
+    else {
+      if (P2.v == null) L2.push(["Resultado", "sem solução: " + P2.motivo]);
+      else { L2.push([n.vr === "d" ? "Deságio nominal mínimo" : "VB do dono máximo", C(P2.ok ? P2.vLim : P2.v, "pct")]); if (!P2.ok) L2.push(["Observação", "sem solução: " + P2.motivo]); }
+      var tt = P2.teto;
+      if (tt != null) L2.push(["Pagamento máximo ao dono, teto (R$/kWh)", C(tt / 1000, "rkwh")], ["Pagamento máximo ao dono, teto (R$/MWh)", C(tt, "n2")],
+        ["Pagamento máximo ao dono, teto (R$/mês)", C(tt * q, "brl")], ["Pagamento máximo ao dono, teto (R$/ano)", C(tt * q * 12, "brl")],
+        ["Teto: deságio sobre a tarifa sem impostos", C(r.U ? 1 - tt / r.U : null, "pct")], ["Teto: deságio sobre a tarifa com impostos", C(r.V ? 1 - tt / r.V : null, "pct")],
+        ["Proposta atual x teto", tt - r.dono >= -1e-9 ? "folga de " + brl(Math.max(0, tt - r.dono) * q) + "/mês" : "acima do teto em " + brl((r.dono - tt) * q) + "/mês"]);
+    }
+    bl.push({tit: "Cálculo reverso: margem mínima (" + (n.vr === "d" ? "deságio mínimo" : "VB máximo") + " e teto ao dono)", cab: ["Item", "Valor"], linhas: L2});
+    var FL = [["Deságio nominal", "d", "pct"], ["VB do dono", "s", "pct"]], fx = function (rot, f) { return [rot].concat(n.NFX.map(function (c) { return f(n.FX[c[0]], c[0]); })); };
+    var linF = FL.map(function (l) { return fx(l[0], function (f) { return C(f[l[1]], l[2]); }); }).concat([
+      fx("Preço ao parceiro (R$/kWh)", function (f) { return C(f.r.pk, "rkwh"); }),
+      fx("Dono (R$/MWh)", function (f) { return C(f.r.dono, "n2"); }),
+      fx("Dono (R$/mês)", function (f) { return C(f.r.dono * q, "brl"); }),
+      fx("Deságio sobre a tarifa sem impostos", function (f) { return C(f.r.dimp, "pct"); }),
+      fx("Deságio sobre a tarifa com impostos", function (f) { return C(f.r.dV, "pct"); }),
+      fx("Deságio sobre o valor compensado (referência)", function (f) { return C(f.r.dWI, "pct"); }),
+      fx("Margem líquida da Thopen (R$/mês)", function (f) { return C(f.r.mg * q, "brl"); }),
+      fx("Margem líquida da Thopen (% do valor compensado)", function (f) { return C(f.r.WI ? f.r.mg / f.r.WI : null, "pct"); }),
+      fx("Situação", function (f, k) { return n.mgMwh == null ? "-" : (f.abx ? (k === "al" && n.acima ? "acima do limite: margem abaixo da mínima" : "abaixo da margem mínima") : "ok"); })]);
+    bl.push({tit: "Faixa de negociação", cab: ["Item"].concat(n.NFX.map(function (c) { return c[1]; })), linhas: linF, nota: $("n-faixa-nota").textContent});
+    var av = $("n-faixa-aviso");
+    if (av.style.display !== "none" && av.textContent) bl.push({tit: "Aviso", linhas: [[av.textContent]], aviso: true});
+    S.push({nome: "Negociação", tit: "Negociação", blocos: bl});
+    // 5. Projecao
+    var vz = function (k) { var a = []; for (var j = 0; j < k; j++) a.push(""); return a; };
+    var linP = A.map(function (a) { return [C(a.ano, "int"), C(a.p, "pct"), C(a.U, "n2"), C(a.V, "n2"), C(a.Y, "n2"), C(a.cfb, "n2"), C(a.d, "pct"), C(a.pk, "rkwh"), C(a.donoMwh, "n2"),
+      C(a.mwh, "n2"), C(a.dono, "brl"), C(a.th, "brl"), C(a.mg, "brl"), C(a.dimp, "pct"), C(a.dV, "pct"), C(a.dWI, "pct")]; });
+    linP.push(["Total"].concat(vz(8), [C(PJ.tot.mwh, "n2"), C(PJ.tot.dono, "brl"), C(PJ.tot.th, "brl"), C(PJ.tot.mg, "brl")], vz(3)));
+    linP.push(["VPL a " + pct2(P.taxa) + " a.a."].concat(vz(9), [C(PJ.vpl.dono, "brl"), C(PJ.vpl.th, "brl"), C(PJ.vpl.mg, "brl")], vz(3)));
+    var ult = A[A.length - 1];
+    S.push({nome: "Projeção", tit: "Projeção do contrato ano a ano", blocos: [
+      {tit: "Resumo", cab: ["Item", "Valor"], linhas: [
+        ["Dono no ano 1 (" + A[0].ano + "), por mês", C(A[0].dono / 12, "brl")], ["Dono no ano 1 (" + A[0].ano + "), por ano", C(A[0].dono, "brl")],
+        ["Dono no último ano (" + ult.ano + "), por mês", C(ult.dono / 12, "brl")], ["Dono no último ano (" + ult.ano + "), por ano", C(ult.dono, "brl")],
+        ["Total do contrato ao dono (" + P.prazo + " anos)", C(PJ.tot.dono, "brl")], ["Total da parte da Thopen", C(PJ.tot.th, "brl")], ["Total da margem líquida da Thopen", C(PJ.tot.mg, "brl")],
+        ["VPL do dono", C(PJ.vpl.dono, "brl")], ["VPL da parte da Thopen (antes do desconto ao cliente)", C(PJ.vpl.th, "brl")], ["VPL da Thopen (margem líquida)", C(PJ.vpl.mg, "brl")],
+        ["Taxa de desconto do VPL (a.a., fluxos no fim de cada ano)", C(P.taxa, "pct")]]},
+      {graf: true, linhas: []},
+      {tit: "Ano a ano", cab: ["Ano", "% Fio B", "Tarifa sem impostos (R$/MWh)", "Tarifa com impostos (R$/MWh)", "Benefício fiscal (R$/MWh)", "Fio B do dono (R$/MWh)", "Deságio nominal", "Preço (R$/kWh)", "Dono (R$/MWh)",
+        "Energia compensada (MWh/ano)", "Dono (R$/ano)", "Thopen (R$/ano)", "Margem líquida (R$/ano)", "Deságio sobre a tarifa sem impostos", "Deságio sobre a tarifa com impostos", "Deságio sobre o valor compensado"],
+        linhas: linP, nota: $("n-proj-nota").textContent}]});
+    // 6. Memoria de calculo
+    S.push({nome: "Memória de cálculo", tit: "Memória de cálculo (por MWh compensado)", blocos: [{cab: ["Passo", "Fórmula", "Cálculo", "Valor"],
+      linhas: arrUlt.mem.map(function (l) { return [l[0], l[1], l[2], expBrNum(l[3])]; }), nota: nota}]});
+    return S;
+  }
+
+  // ---- Excel
+  function expCarregaXlsx(ok, falha) {
+    if (window.XLSX && window.XLSX.utils) { ok(); return; }
+    if (!xlsxCarga) {
+      xlsxCarga = [];
+      var s = document.createElement("script"); s.src = XLSX_URL; s.async = true;
+      var fim = function (bom) { var cbs = xlsxCarga || []; xlsxCarga = null; if (!bom && s.parentNode) s.parentNode.removeChild(s);
+        cbs.forEach(function (f) { (bom && window.XLSX ? f[0] : f[1])(); }); };
+      s.onload = function () { fim(true); }; s.onerror = function () { fim(false); };
+      document.head.appendChild(s);
+    }
+    xlsxCarga.push([ok, falha]);
+  }
+  function expNomeArq(ext) {
+    var limpa = function (s) { return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, ""); };
+    var d = new Date(), iso = d.getFullYear() + "-" + ("0" + (d.getMonth() + 1)).slice(-2) + "-" + ("0" + d.getDate()).slice(-2);
+    return "Arrendamento_" + limpa(arrDist) + "_" + limpa(negUlt.gd) + "_" + iso + "." + ext;
+  }
+  function expPlanilha(sec) {
+    var aoa = [], fm = [];
+    var add = function (row) { var r = aoa.length, lin = [];
+      row.forEach(function (c, j) { if (c && typeof c === "object") { lin.push(c.v); fm.push([r, j, c.t]); } else lin.push(c == null ? "" : c); });
+      aoa.push(lin); };
+    add([sec.tit]); add([]);
+    sec.blocos.forEach(function (b) {
+      if (b.graf) return;
+      if (b.tit) add([b.tit]); if (b.cab) add(b.cab); b.linhas.forEach(add); if (b.nota) add([b.nota]); add([]); });
+    var ws = XLSX.utils.aoa_to_sheet(aoa);
+    fm.forEach(function (f) { var c = ws[XLSX.utils.encode_cell({r: f[0], c: f[1]})]; if (c) { c.t = "n"; c.z = EXP_FMT[f[2]] || EXP_FMT.n2; } });
+    var larg = [];
+    aoa.forEach(function (lin) { if (lin.length < 2) return; lin.forEach(function (v, j) { var k = String(v).length + 2; larg[j] = Math.min(60, Math.max(larg[j] || 12, k)); }); });
+    ws["!cols"] = larg.map(function (w) { return {wch: w || 12}; });
+    return ws;
+  }
+  function expExcel() {
+    if (!expOk()) { expMsg(EXP_SEM); return; }
+    var b = $("n-xlsx"), orig = b.textContent; b.textContent = "Gerando Excel..."; b.disabled = true;
+    var fim = function () { b.textContent = orig; b.disabled = false; };
+    expCarregaXlsx(function () {
+      try {
+        if (!expOk()) { expMsg(EXP_SEM); fim(); return; }
+        var wb = XLSX.utils.book_new();
+        expDados().forEach(function (s) { XLSX.utils.book_append_sheet(wb, expPlanilha(s), s.nome); });
+        wb.Props = {Title: "Arrendamento " + arrDist, Author: "Thopen Energia"};
+        XLSX.writeFile(wb, expNomeArq("xlsx")); expMsg("");
+      } catch (e) { expMsg("Não foi possível gerar o Excel: " + ((e && e.message) || e)); }
+      fim();
+    }, function () { fim(); expMsg("Não foi possível carregar a biblioteca do Excel (SheetJS). Verifique a conexão com a internet e tente de novo."); });
+  }
+
+  // ---- Relatorios para PDF: HTML A4 limpo numa janela nova (ou iframe oculto, se o pop-up for bloqueado) + print()
+  var REL_CSS = "*{box-sizing:border-box}body{margin:0;color:#1E2533;font:10.5px/1.4 \"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;-webkit-print-color-adjust:exact;print-color-adjust:exact}" +
+    "header{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;border-bottom:2px solid #1F3864;padding-bottom:6px;margin-bottom:10px}" +
+    ".marca{font-size:16px;font-weight:700;color:#1F3864;letter-spacing:.3px}.tit{font-size:13px;font-weight:600;margin-top:2px}.data{color:#5B6577;text-align:right;white-space:nowrap}" +
+    ".interno{display:inline-block;border:1.5px solid #C0392B;color:#C0392B;font-weight:700;padding:0 8px;border-radius:4px;margin-left:8px;font-size:10px;text-transform:uppercase}" +
+    "h2{font-size:12.5px;color:#1F3864;margin:10px 0 6px}h3{font-size:11px;color:#1F3864;margin:10px 0 4px}" +
+    "table{border-collapse:collapse;width:100%;margin:4px 0 8px}th,td{border:1px solid #9AA5B8;padding:3px 5px;vertical-align:top;text-align:left}" +
+    "th{background:#E8EDF5;font-weight:600}td.n{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}tr{page-break-inside:avoid}" +
+    ".sec{page-break-before:always}.sec.pri{page-break-before:auto}.nota{color:#5B6577;font-size:9.5px;margin:4px 0}" +
+    ".aviso{border:1.5px solid #C0392B;color:#C0392B;padding:5px 8px;font-weight:600;margin:6px 0}" +
+    ".rod{margin-top:14px;color:#5B6577;font-size:9px;border-top:1px solid #CCD3DF;padding-top:4px}img.graf{width:100%;max-height:300px;object-fit:contain;margin:4px 0 8px}" +
+    "@media screen{body{max-width:1100px;margin:16px auto;padding:0 16px}}";
+  function relTabela(cab, linhas) {
+    var h = "<table>" + (cab ? "<thead><tr>" + cab.map(function (c) { return "<th>" + esc(c) + "</th>"; }).join("") + "</tr></thead>" : "");
+    return h + "<tbody>" + linhas.map(function (l) { return "<tr>" + l.map(function (c) {
+      return "<td" + (c && typeof c === "object" ? ' class="n"' : "") + ">" + esc(expTxt(c)) + "</td>"; }).join("") + "</tr>"; }).join("") + "</tbody></table>";
+  }
+  function relDoc(titulo, sub, corpo, interno) {
+    var quando = expAgora();
+    return '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>' + esc(titulo) + "</title><style>" + REL_CSS +
+      (interno ? "@page{size:A4 landscape;margin:12mm}" : "@page{size:A4;margin:16mm 14mm}") + "</style></head><body>" +
+      '<header><div><div class="marca">Thopen Energia</div><div class="tit">' + esc(titulo) + (interno ? '<span class="interno">Uso interno</span>' : "") + "</div>" +
+      (sub ? '<div class="nota">' + esc(sub) + "</div>" : "") + '</div><div class="data">' + esc(quando) + "</div></header>" + corpo +
+      '<div class="rod">' + (interno ? "Documento de uso interno: não enviar ao proprietário. " : "") + "Estimativa gerada em " + esc(quando) + ".</div></body></html>";
+  }
+  function relImprime(html) {
+    var w = null;
+    try { w = window.open("", "_blank"); } catch (e) { w = null; }
+    if (w && w.document) {
+      w.document.open(); w.document.write(html); w.document.close();
+      setTimeout(function () { try { w.focus(); w.print(); } catch (e) {} }, 400);
+      return;
+    }
+    var f = $("n-rel-frame"); if (f) f.parentNode.removeChild(f);
+    f = document.createElement("iframe"); f.id = "n-rel-frame"; f.setAttribute("aria-hidden", "true");
+    f.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
+    document.body.appendChild(f);
+    var dc = f.contentWindow.document; dc.open(); dc.write(html); dc.close();
+    setTimeout(function () { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { expMsg("Não foi possível abrir a impressão: libere pop-ups para este site."); } }, 400);
+  }
+
+  // >>> PROPOSTA AO PROPRIETARIO (lista branca de campos; conferida por tests/test_exportacao.py)
+  var PROP_CAMPOS = ["usina", "distribuidora", "modalidade", "referencia", "condicoes", "ano1", "pk", "donoMwh", "donoMes", "donoAno",
+    "dimp", "dV", "tarifaSem", "tarifaCom", "reajuste", "evolucao", "total", "prazo", "premissas"];
+  function propDados() {
+    var n = negUlt, x = n.x, i = I[arrDist] || {}, P = n.P, A = n.PJ.anos, a1 = A[0];
+    var fb = x.enq === 1 ? "sem Fio B (GD I)" : (P.esc ? "Fio B pago pelo proprietário conforme o escalonamento da Lei 14.300 (60% em 2026, 75% em 2027, 90% em 2028 e 100% a partir de 2029, aproximação)" : "Fio B pago pelo proprietário fixo em " + pct2(x.pfb));
+    var src = {
+      usina: negUsina(),
+      distribuidora: arrDist + (i.uf ? " (" + i.uf + ")" : ""),
+      modalidade: n.gd,
+      referencia: dataBr($("a-data").value || D.meta.hoje),
+      condicoes: x.modo === "p" ? "preço de R$ " + f4.format(x.P) + "/kWh compensado ao proprietário, líquido do Fio B, e VB de " + pct2(x.s) + " do benefício fiscal ao proprietário"
+        : "deságio de " + pct2(x.d) + " sobre a tarifa sem impostos (TUSD + TE) e VB de " + pct2(x.s) + " do benefício fiscal ao proprietário",
+      ano1: a1.ano, pk: a1.pk, donoMwh: a1.donoMwh, donoMes: a1.dono / 12, donoAno: a1.dono,
+      dimp: a1.dimp, dV: a1.dV, tarifaSem: a1.U / 1000, tarifaCom: a1.V / 1000,
+      reajuste: P.fixo === "p" ? "Preço reajustado anualmente pelo índice de " + pct2(P.reaj) + " ao ano." : "Deságio mantido ao longo do contrato; o valor acompanha os reajustes da tarifa e do Fio B.",
+      evolucao: A.map(function (a) { return {ano: a.ano, mwh: a.mwh, pk: a.pk, donoMwh: a.donoMwh, donoMes: a.dono / 12, donoAno: a.dono, dimp: a.dimp, dV: a.dV}; }),
+      total: n.PJ.tot.dono, prazo: P.prazo,
+      premissas: "Estimativa com as tarifas ANEEL vigentes e tributos médios das faturas, sem bandeiras, CIP nem custo de disponibilidade; reajuste anual da tarifa de " + pct2(P.reaj) +
+        "; " + fb + (P.degr ? "; degradação da geração de " + pct2(P.degr) + " ao ano" : "") + ". Os valores dependem da energia efetivamente compensada."
+    };
+    var o = {}; PROP_CAMPOS.forEach(function (k) { o[k] = src[k]; });
+    return o;
+  }
+  function propHtml(o) {
+    var corpo = '<div class="sec pri"><h2>Usina e condições</h2>' + relTabela(null, [["Usina", o.usina], ["Distribuidora", o.distribuidora], ["Modalidade", o.modalidade],
+        ["Data de referência", o.referencia], ["Condições", o.condicoes]]) +
+      "<h2>Valor ao proprietário no ano 1 (" + esc(o.ano1) + ")</h2>" + relTabela(["Base", "Valor"], [["Por kWh compensado, líquido do Fio B", C(o.pk, "rkwh")],
+        ["Por MWh compensado", C(o.donoMwh, "brl")], ["Por mês (estimado)", C(o.donoMes, "brl")], ["Por ano (estimado)", C(o.donoAno, "brl")]]) +
+      "<h2>Deságio equivalente</h2>" + relTabela(["Base", "Tarifa (R$/kWh)", "Deságio"], [["Sobre a tarifa sem impostos (TUSD + TE)", C(o.tarifaSem, "rkwh"), C(o.dimp, "pct")],
+        ["Sobre a tarifa com impostos (ICMS, PIS e COFINS)", C(o.tarifaCom, "rkwh"), C(o.dV, "pct")]]) +
+      '<p class="nota">' + esc(o.reajuste) + "</p></div>" +
+      '<div class="sec"><h2>Evolução prevista por ano</h2>' + relTabela(["Ano", "Energia compensada (MWh/ano)", "Preço (R$/kWh)", "R$/MWh", "R$/mês", "R$/ano",
+        "Deságio sobre a tarifa sem impostos", "Deságio sobre a tarifa com impostos"], o.evolucao.map(function (a) {
+          return [String(a.ano), C(a.mwh, "n2"), C(a.pk, "rkwh"), C(a.donoMwh, "brl"), C(a.donoMes, "brl"), C(a.donoAno, "brl"), C(a.dimp, "pct"), C(a.dV, "pct")]; })
+        .concat([["Total em " + o.prazo + " anos", "", "", "", "", C(o.total, "brl"), "", ""]])) +
+      "<h2>Premissas</h2><p>" + esc(o.premissas) + "</p></div>";
+    return relDoc("Proposta de arrendamento", o.usina, corpo, false);
+  }
+  // <<< PROPOSTA
+  // Trava: o texto da proposta (fora o cabecalho e o nome da usina) nao pode ter termos internos
+  var PROP_PROIBIDO = /margem|thopen|limite|faixa|desconto ao cliente|uso interno|valor compensado|parte da/i;
+  function propLimpa(html, o) {
+    var t = html.split(esc(o.usina)).join(" ").replace(/<[^>]+>/g, " ");
+    return !PROP_PROIBIDO.test(t.replace("Thopen Energia", " "));
+  }
+  function intHtml() {
+    var corpo = "";
+    expDados().forEach(function (s, k) {
+      corpo += '<div class="sec' + (k ? "" : " pri") + '"><h2>' + esc(s.tit) + "</h2>";
+      s.blocos.forEach(function (b) {
+        if (b.graf) { var g = graficos["g-neg"]; try { if (g && g.canvas) corpo += '<img class="graf" alt="Projeção anual: dono e margem líquida da Thopen" src="' + g.canvas.toDataURL("image/png") + '">'; } catch (e) {} return; }
+        if (b.aviso) { corpo += '<div class="aviso">' + esc(b.linhas[0][0]) + "</div>"; return; }
+        if (b.tit) corpo += "<h3>" + esc(b.tit) + "</h3>";
+        corpo += relTabela(b.cab, b.linhas);
+        if (b.nota) corpo += '<p class="nota">' + esc(b.nota) + "</p>";
+      });
+      corpo += "</div>";
+    });
+    return relDoc("Análise interna de arrendamento", negUsina() + "; " + arrDist + ", " + negUlt.gd, corpo, true);
+  }
+  $("n-xlsx").addEventListener("click", expExcel);
+  $("n-pdf-prop").addEventListener("click", function () {
+    if (!expOk()) { expMsg(EXP_SEM); return; }
+    var o = propDados(), h = propHtml(o);
+    if (!propLimpa(h, o)) { expMsg("Proposta bloqueada: o relatório teria dados internos. Use o PDF de análise interna."); return; }
+    expMsg(""); relImprime(h);
+  });
+  $("n-pdf-int").addEventListener("click", function () { if (!expOk()) { expMsg(EXP_SEM); return; } expMsg(""); relImprime(intHtml()); });
 
   // ================= TABELA THOPEN (replica a planilha Tarifas.xlsx com a tarifa ANEEL vigente)
   var tEnq = 1, tOrd = {k: 0, asc: true};
