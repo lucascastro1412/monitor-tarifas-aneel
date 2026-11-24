@@ -53,6 +53,19 @@ def test_leitor_aceita_virgula_e_ponto():
         assert df.loc[0, "cnpj"] == "00000000000001"
 
 
+def test_meta_impostos():
+    with tempfile.TemporaryDirectory() as d:
+        base = Path(d)
+        (base / mt.ARQ_IMPOSTOS_META).write_text(
+            '{"gerado_em": "2026-11-24T11:34:46-03:00", "mes_ref_inicio": "2026-09", "mes_ref_fim": "2026-11"}',
+            encoding="utf-8")
+        m = mt.meta_impostos(base)
+        assert m["selo"] == "impostos atualizados em 24/11, faturas de 09/26 a 11/26", m
+        assert "set-nov/2026" in m["origem"] and "24/11/2026" in m["origem"], m
+        (base / mt.ARQ_IMPOSTOS_META).write_text("{quebrado", encoding="utf-8")
+        assert mt.meta_impostos(base)["selo"] == ""  # arquivo ilegivel: sem selo, origem fixa
+
+
 def test_csvs_do_repositorio():
     ref = mt.ler_csv_pv(RAIZ, mt.ARQ_REF_PLANILHA)
     gd = mt.ler_csv_pv(RAIZ, mt.ARQ_ICMS_GD)

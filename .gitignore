@@ -4,3 +4,4 @@ __pycache__/
 *.parquet
 site/
 logs/
+config.local.json

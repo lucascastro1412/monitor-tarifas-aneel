@@ -1580,8 +1580,9 @@ def textos_grupo_a(cfg: dict) -> list[str]:
 ARQ_IMPOSTOS = "impostos_distribuidoras.csv"          # aliquotas medias das faturas, por distribuidora e subgrupo
 ARQ_ICMS_GD = "icms_gd_distribuidoras.csv"            # flags de ICMS na energia compensada e repasse s
 ARQ_REF_PLANILHA = "referencia_planilha_tarifas.csv"  # TUSD e TE da planilha Tarifas.xlsx (referencia fixa)
-ARQS_IMPOSTOS = (ARQ_IMPOSTOS, ARQ_ICMS_GD, ARQ_REF_PLANILHA)
-ORIGEM_FATURAS = "médias de faturas de UCs consumidoras da base Thopen, set-nov/2026"
+ARQ_IMPOSTOS_META = "impostos_meta.json"             # data de geracao e janela de meses das faturas
+ARQS_IMPOSTOS = (ARQ_IMPOSTOS, ARQ_ICMS_GD, ARQ_REF_PLANILHA, ARQ_IMPOSTOS_META)
+ORIGEM_FATURAS = "médias de faturas de UCs consumidoras da base Thopen, set-nov/2026"  # sem impostos_meta.json
 ICMS_PADRAO, PIS_PADRAO, COFINS_PADRAO = 0.18, 0.01, 0.04  # PIS+COFINS padrao 5%
 REPASSE_PADRAO = 0.5
 FONTE_FLAG_PADRAO = "padrão, revisar"
@@ -1648,6 +1649,35 @@ def hash_impostos(base: Path) -> str:
         arq = _arq_base(base, nome)
         h.update(arq.read_bytes() if arq else b"-")
     return h.hexdigest()
+
+
+MESES_ABREV = ("jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez")
+
+
+def meta_impostos(base: Path) -> dict:
+    """Le impostos_meta.json (gerado junto com o CSV de impostos). Devolve origem (texto da fonte das aliquotas),
+    selo ("impostos atualizados em DD/MM, faturas de MM/AA a MM/AA") e as datas; sem o arquivo, a origem fixa."""
+    out = {"origem": ORIGEM_FATURAS, "selo": "", "atualizado": "", "ini": "", "fim": ""}
+    arq = _arq_base(base, ARQ_IMPOSTOS_META)
+    if arq is None:
+        return out
+    try:
+        m = json.loads(arq.read_text(encoding="utf-8"))
+        ger = datetime.fromisoformat(str(m["gerado_em"]))
+        ini = datetime.strptime(str(m["mes_ref_inicio"]), "%Y-%m")
+        fim = datetime.strptime(str(m["mes_ref_fim"]), "%Y-%m")
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        print(f"Aviso: {ARQ_IMPOSTOS_META} ilegivel ({e}); usando a origem fixa das aliquotas.")
+        return out
+    mm = lambda d: f"{d:%m/%y}"  # noqa: E731
+    per = (f"{MESES_ABREV[ini.month - 1]}/{ini.year}" if ini.year != fim.year else MESES_ABREV[ini.month - 1]) + \
+        f"-{MESES_ABREV[fim.month - 1]}/{fim.year}"
+    out.update({
+        "origem": f"médias de faturas de UCs consumidoras da base Thopen, {per} (atualizadas em {ger:%d/%m/%Y})",
+        "selo": f"impostos atualizados em {ger:%d/%m}, faturas de {mm(ini)} a {mm(fim)}",
+        "atualizado": f"{ger:%d/%m/%Y}", "ini": mm(ini), "fim": mm(fim),
+    })
+    return out
 
 
 def _aliquotas_faturas(imp: pd.DataFrame | None) -> dict[str, dict]:
@@ -1746,6 +1776,9 @@ def impostos_faturas_excel(base: Path) -> pd.DataFrame:
 
 def textos_impostos(visoes: dict) -> list[str]:
     imp = visoes.get("imp")
+    meta = visoes.get("imp_meta") or meta_impostos(Path("."))
+    atual = (f"Impostos atualizados em {meta['atualizado']}, com faturas de {meta['ini']} a {meta['fim']} (janela de 3 "
+             "meses de referencia; 6 se a distribuidora tem menos de 100 faturas). " if meta["atualizado"] else "")
     cont = ""
     if imp is not None and len(imp):
         n = imp["fonte_flags"].map(lambda f: "planilha" if f.startswith("planilha") else
@@ -1767,7 +1800,10 @@ def textos_impostos(visoes: dict) -> list[str]:
         "2029 em diante aproximado por 100%). Na calculadora o % vem da data de referencia; nas demais abas, "
         "W GD II usa o Fio B efetivo da vigencia atual. GD III pela Lei 14.300 (art. 27, par. 1o) paga ainda 40% do "
         "Fio A, TFSEE e P&D/EE, o que nao esta modelado.",
-        f"Aliquotas: {ORIGEM_FATURAS} ({ARQ_IMPOSTOS}): media do subgrupo B3 se houver, senao TOTAL. Sem dado de "
+        f"Aliquotas: {meta['origem']} ({ARQ_IMPOSTOS}): media do subgrupo B3 se houver, senao TOTAL. "
+        f"{atual}"
+        "Os impostos sao atualizados por um script privado da Thopen a partir das faturas; sem ele o painel usa o "
+        "ultimo CSV publicado. Sem dado de "
         "fatura: ICMS e PIS/COFINS da planilha Tarifas.xlsx; sem os dois: ICMS 18% e PIS+COFINS 5%. A fonte de cada "
         "aliquota aparece na calculadora e no Excel (aba Impostos). PIS/COFINS variam mes a mes (credito apurado "
         "pela distribuidora); as Energisa MT, TO, MS e Minas Rio informam na fatura a aliquota nominal (1,65% e "
@@ -2433,7 +2469,8 @@ def dados_html(visoes: dict, log_path: Path, cfg: dict, agora: datetime, estado:
         "metodologia": textos_metodologia(visoes, cfg),
         "ga": dados_grupo_a_html(visoes),
         "ref": ref,
-        "imp": {"origem": ORIGEM_FATURAS, "padrao": {"i": ICMS_PADRAO, "pis": PIS_PADRAO, "cof": COFINS_PADRAO,
+        "imp": {"origem": (visoes.get("imp_meta") or {}).get("origem", ORIGEM_FATURAS),
+                "selo": (visoes.get("imp_meta") or {}).get("selo", ""), "padrao": {"i": ICMS_PADRAO, "pis": PIS_PADRAO, "cof": COFINS_PADRAO,
                                                      "s": REPASSE_PADRAO}},
     }
 
@@ -2535,6 +2572,8 @@ select{padding:6px 8px;border:1px solid var(--borda);border-radius:7px;font:inhe
 .sim-res{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr));margin-bottom:12px}
 .sim-res .card{box-shadow:none}
 .sim-res .melhor{border:2px solid var(--verde)}
+.selo-imp{display:inline-block;font-size:11.5px;font-weight:500;color:var(--suave);border:1px solid var(--borda);border-radius:10px;padding:1px 8px;margin-left:6px;vertical-align:middle}
+.selo-imp:empty{display:none}
 .nota-sim{background:#F7F9FC;border:1px solid var(--borda);border-radius:8px;padding:8px 12px;font-size:12.5px;color:var(--suave);margin-top:10px}
 a{color:var(--azul2)}
 @media (max-width:640px){header{padding:18px 16px 0}header h1{font-size:18px}.graf{height:280px}.graf.alto{height:480px}.kpi .val{font-size:21px}}
@@ -2651,7 +2690,7 @@ a{color:var(--azul2)}
       <label>TE E (R$/MWh)<input type="text" inputmode="decimal" id="c-te"></label>
       <label>Fio B SCEE (R$/MWh)<input type="text" inputmode="decimal" id="c-fb"></label>
     </div>
-    <h3>Tributos e repasse</h3>
+    <h3>Tributos e repasse <span class="selo-imp" id="c-selo"></span></h3>
     <div class="campos">
       <label>ICMS (%)<input type="text" inputmode="decimal" id="c-icms"></label>
       <label>PIS (%)<input type="text" inputmode="decimal" id="c-pis"></label>
@@ -3679,7 +3718,7 @@ a{color:var(--azul2)}
     calcPfb();
   }
   var calcUlt = null;
-  function renderCalc() { if (!calcIni) { calcIni = true; calcPadroes(true); } calcRender(); }
+  function renderCalc() { if (!calcIni) { calcIni = true; calcPadroes(true); $("c-selo").textContent = D.imp.selo || ""; } calcRender(); }
   function calcRender() {
     var d = calcDist, m = M[d], i = I[d] || {}, t = (m || {}).tx || {};
     $("c-nome").textContent = rot(d);
@@ -3845,6 +3884,7 @@ a{color:var(--azul2)}
 # ---------------------------------------------------------------------------- main
 
 def gerar_paineis(base: Path, visoes: dict, log_path: Path, cfg: dict, agora: datetime, estado: dict) -> None:
+    visoes["imp_meta"] = meta_impostos(base)
     visoes["imp"] = tabela_impostos(visoes, base)
     visoes["imp_faturas"] = impostos_faturas_excel(base)
     painel = base / f"{PAINEL}.xlsx"

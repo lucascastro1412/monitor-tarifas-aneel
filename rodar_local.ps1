@@ -6,6 +6,11 @@
 #   .\rodar_local.ps1                  # coleta, commit e push
 #   .\rodar_local.ps1 -ForcarPainel    # regera Excel e HTML mesmo sem mudancas
 #   .\rodar_local.ps1 -SemPush         # coleta e commit, sem push
+#   .\rodar_local.ps1 -ForcarImpostos  # roda o script de impostos mesmo se ja rodou hoje
+#
+# Impostos: os impostos sao atualizados por um script privado da Thopen a partir das faturas; sem ele o painel
+# usa o ultimo CSV publicado. O caminho do script fica em config.local.json (nao versionado) ou na variavel
+# MONITOR_SCRIPT_IMPOSTOS. Frequencia: no maximo 1 vez por dia (pula se impostos_meta.json for de hoje).
 #
 # Requisitos: Python 3.11+ (comando "py" ou "python", ou o caminho absoluto em $pythonFallback)
 # com requirements.txt instalado, e git ja
@@ -14,7 +19,8 @@
 
 param(
     [switch]$ForcarPainel,
-    [switch]$SemPush
+    [switch]$SemPush,
+    [switch]$ForcarImpostos
 )
 
 $ErrorActionPreference = "Stop"
@@ -46,13 +52,65 @@ try {
     elseif (Test-Path $pythonFallback) { $python = $pythonFallback }
     else { throw "Python nao encontrado (nem py, nem python no PATH, nem $pythonFallback)" }
     Write-Host "Python: $python"
+
+    # Impostos (ICMS, PIS e COFINS das faturas): script privado, fora deste repositorio. Caminho em
+    # config.local.json ({"script_impostos": "C:\\...\\atualizar_impostos.py"}, nao versionado) ou na variavel
+    # MONITOR_SCRIPT_IMPOSTOS. Roda no maximo 1 vez por dia (pula se impostos_meta.json ja foi gerado hoje).
+    # Qualquer falha so gera aviso: a coleta da ANEEL segue com o CSV anterior.
+    try {
+        $scriptImp = $env:MONITOR_SCRIPT_IMPOSTOS
+        $cfgLocal = Join-Path $repo "config.local.json"
+        if (-not $scriptImp -and (Test-Path $cfgLocal)) {
+            $scriptImp = (Get-Content $cfgLocal -Raw -Encoding UTF8 | ConvertFrom-Json).script_impostos
+        }
+        $metaImp = Join-Path $repo "impostos_meta.json"
+        $hojeImp = $false
+        if (Test-Path $metaImp) {
+            $ger = (Get-Content $metaImp -Raw -Encoding UTF8 | ConvertFrom-Json).gerado_em
+            $hojeImp = ([string]$ger).StartsWith((Get-Date -Format "yyyy-MM-dd"))
+        }
+        if (-not $scriptImp) {
+            Write-Host "Impostos: script privado nao configurado; usando o ultimo CSV publicado."
+        } elseif (-not (Test-Path $scriptImp)) {
+            Write-Host "AVISO impostos: script nao encontrado ($scriptImp); usando o CSV anterior."
+        } elseif ($hojeImp -and -not $ForcarImpostos) {
+            Write-Host "Impostos: ja atualizados hoje ($ger); pulando."
+        } else {
+            $env:ACESSO_CH = "1"   # credenciais: so nas variaveis de ambiente do usuario, lidas pelo script
+            Write-Host "Impostos: atualizando a partir das faturas..."
+            $saidaImp = Join-Path $repo "impostos_distribuidoras.csv"
+            $outImp = Join-Path $logs "impostos_stdout.txt"
+            $errImp = Join-Path $logs "impostos_stderr.txt"
+            $pyExe = (Get-Command $python).Source
+            $argImp = @("`"$scriptImp`"", "--saida", "`"$saidaImp`"", "--repo", "`"$repo`"")
+            $proc = Start-Process -FilePath $pyExe -ArgumentList $argImp -NoNewWindow -PassThru `
+                -RedirectStandardOutput $outImp -RedirectStandardError $errImp
+            $null = $proc.Handle  # sem isso o ExitCode pode vir vazio no PowerShell 5.1
+            if (-not $proc.WaitForExit(600000)) {
+                $proc.Kill()
+                Write-Host "AVISO impostos: tempo esgotado (10 min); usando o CSV anterior."
+            } else {
+                $proc.WaitForExit()
+                Get-Content $outImp, $errImp -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $_" }
+                if ($proc.ExitCode -ne 0) {
+                    Write-Host "AVISO impostos: script terminou com codigo $($proc.ExitCode); usando o CSV anterior."
+                }
+            }
+        }
+    } catch {
+        Write-Host "AVISO impostos: $_ ; usando o CSV anterior."
+    } finally {
+        Remove-Item Env:\ACESSO_CH -ErrorAction SilentlyContinue
+    }
+
     $argsPy = @("monitor_tarifas.py")
     if ($ForcarPainel) { $argsPy += "--forcar-painel" }
     & $python @argsPy
     if ($LASTEXITCODE -ne 0) { throw "monitor_tarifas.py terminou com codigo $LASTEXITCODE" }
 
     Invoke-Git add -A data
-    foreach ($f in @("Painel_Tarifas_ANEEL.xlsx", "Painel_Tarifas_ANEEL.html")) {
+    foreach ($f in @("Painel_Tarifas_ANEEL.xlsx", "Painel_Tarifas_ANEEL.html", "impostos_distribuidoras.csv",
+                     "impostos_meta.json")) {
         if (Test-Path $f) { Invoke-Git add $f }
     }
     & git diff --cached --quiet
