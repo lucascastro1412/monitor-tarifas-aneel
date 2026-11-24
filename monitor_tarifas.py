@@ -1776,7 +1776,7 @@ def faixa_negociacao(r: dict, margem: float, var: str = "d", abertura: float = N
             "abertura": ab, "alvo": alvo, "limite": limite, "acima_limite": acima, "excesso": excesso,
             "ordem": ["abertura", "limite", "alvo"] if acima else ["abertura", "alvo", "limite"],
             "rotulos": {"abertura": "Abertura", "limite": "Limite",
-                        "alvo": "Pedido do dono (acima do limite)" if acima else "Alvo"}}
+                        "alvo": "Preço informado (acima do limite)" if acima else "Alvo"}}
 
 
 def projecao_arrendamento(tusd: float, te: float, icms: float, pc: float, flag_te: int = 1, flag_tusd: int = 1,
@@ -2115,7 +2115,7 @@ def textos_arrendamento() -> list[str]:
         "Limite (desagio minimo ou VB maximo da margem minima, o mesmo valor arredondado a 0,01 p.p. para o lado seguro), "
         "editaveis; coluna em vermelho quando a margem fica abaixo da minima. Se o Alvo respeita o limite, Abertura = "
         "desagio atual + 10 p.p. (ordem Abertura, Alvo, Limite); se passa do limite, Abertura = desagio minimo + 10 p.p., "
-        "a ordem vira Abertura, Limite, Pedido do dono (acima do limite) e um aviso mostra quanto o pedido passa do "
+        "a ordem vira Abertura, Limite, Preco informado (acima do limite) e um aviso mostra quanto o preco passa do "
         "limite em R$/kWh, R$/mes e p.p. Preco da Abertura sempre menor ou igual ao do Alvo e ao do Limite.",
         f"Projecao do contrato (padrao {NEG_PRAZO} anos a partir do ano da data de referencia): no ano t (t = 0 no "
         "primeiro ano) D, E e o Fio B SCEE sao multiplicados por (1 + reajuste)^t (padrao: IPCA acumulado dos ultimos "
@@ -4763,7 +4763,7 @@ a{color:var(--azul2)}
     var acima = mgMwh != null && P2 != null && r.mg < mgMwh - 1e-9;
     var abP = vr === "d" ? {d: Math.min(1, Math.max(x.d, lim.d) + NG.abertura), s: x.s} : {d: Math.min(1, x.d + NG.abertura), s: Math.min(x.s, lim.s)};
     var padr = {ab: abP, al: {d: x.d, s: x.s}, li: lim}, FX = {};
-    NFX = acima ? [["ab", "Abertura"], ["li", "Limite"], ["al", "Pedido do dono (acima do limite)"]] : [["ab", "Abertura"], ["al", "Alvo"], ["li", "Limite"]];
+    NFX = acima ? [["ab", "Abertura"], ["li", "Limite"], ["al", "Preço informado (acima do limite)"]] : [["ab", "Abertura"], ["al", "Alvo"], ["li", "Limite"]];
     if (NFX.map(function (c) { return c[0]; }).join(",") !== negOrdem) negMontaFaixa();
     NFX.forEach(function (c) { $("n-fh-" + c[0]).textContent = c[1]; });
     NFX.forEach(function (c) {
@@ -4786,11 +4786,11 @@ a{color:var(--azul2)}
       $("n-faixa-aviso").style.display = "";
     } else if (acima && rLim) { var dif = r.dono - rLim.dono;
       exc = {mwh: dif, kwh: dif / 1000, mes: dif * q, pp: (vr === "d" ? lim.d - x.d : x.s - lim.s) * 100, pk: rLim.pk};
-      $("n-faixa-aviso").textContent = "O pedido do dono passa do limite em R$ " + f4.format(exc.kwh) + "/kWh (" + brl(exc.mes) + "/mês; " + f2.format(exc.pp) + " p.p. de " +
+      $("n-faixa-aviso").textContent = "O preço informado passa do limite em R$ " + f4.format(exc.kwh) + "/kWh (" + brl(exc.mes) + "/mês; " + f2.format(exc.pp) + " p.p. de " +
         (vr === "d" ? "deságio nominal" : "VB do dono") + "): para manter a margem mínima, o preço máximo é R$ " + f4.format(exc.pk) + "/kWh.";
       $("n-faixa-aviso").style.display = "";
     } else { $("n-faixa-aviso").textContent = ""; $("n-faixa-aviso").style.display = "none"; }
-    $("n-faixa-nota").textContent = "Abertura: " + (acima ? (vr === "d" ? "deságio mínimo" : "VB máximo com deságio atual") + " + " + f0.format(NG.abertura * 100) + " p.p. de deságio, pois o pedido do dono passa do limite"
+    $("n-faixa-nota").textContent = "Abertura: " + (acima ? (vr === "d" ? "deságio mínimo" : "VB máximo com deságio atual") + " + " + f0.format(NG.abertura * 100) + " p.p. de deságio, pois o preço informado passa do limite"
       : "deságio atual + " + f0.format(NG.abertura * 100) + " p.p., sem passar do limite") + "; " + (acima ? "Pedido do dono" : "Alvo") + ": configuração atual; Limite: " +
       (vr === "d" ? "deságio mínimo" : "VB máximo") + " da margem mínima, arredondado a 0,01 p.p. para o lado seguro" + (P2 && P2.v != null && !P2.ok ? " (sem solução em 0 a 100%: valor limitado à faixa)" : "") +
       ". Edite o deságio nominal e o VB do dono em qualquer coluna; em vermelho, margem abaixo da mínima. Recalcular faixa volta aos padrões.";
@@ -4867,7 +4867,7 @@ a{color:var(--azul2)}
     if (P1) L.push("Pedido do dono: R$ " + f2.format(n.pedMwh) + "/MWh (" + m(n.pedMwh) + "); " +
       (P1.v == null ? "sem solução (" + P1.motivo + ")" : nv + " necessário " + pct2(P1.v) + (P1.ok ? "" : " (sem solução)") + "; margem Thopen " + m(P1.mg) + " (" + pct2(r.WI ? P1.mg / r.WI : null) + " do valor compensado)" +
         (n.mgMwh != null && P1.ok ? (P1.mg >= n.mgMwh - 1e-9 ? "; viável" : "; abaixo da margem mínima") : "")));
-    if (n.exc) L.push("Pedido do dono acima do limite: passa em R$ " + f4.format(n.exc.kwh) + "/kWh (" + m(n.exc.mwh) + "; " + f2.format(n.exc.pp) + " p.p. de " + nv +
+    if (n.exc) L.push("Preço informado acima do limite: passa em R$ " + f4.format(n.exc.kwh) + "/kWh (" + m(n.exc.mwh) + "; " + f2.format(n.exc.pp) + " p.p. de " + nv +
       "); para manter a margem mínima, o preço máximo é R$ " + f4.format(n.exc.pk) + "/kWh; a Abertura parte do Limite");
     L.push("Faixa: " + n.NFX.map(function (c) { var f = n.FX[c[0]]; return c[1] + ": deságio nominal " + pct2(f.d) + ", VB do dono " + pct2(f.s) + ", preço R$ " + f4.format(f.r.pk) + "/kWh, dono " + m(f.r.dono) + ", deságio sobre a tarifa sem impostos " + pct2(f.r.dimp) + ", sobre a tarifa com impostos " + pct2(f.r.dV) + ", sobre o valor compensado " + pct2(f.r.dWI) + ", margem " + m(f.r.mg) + (f.abx ? " (abaixo da mínima)" : ""); }).join("; "));
     L.push("Projeção (" + (n.P.fixo === "p" ? "preço fixo reajustado pelo índice" : "deságio fixo") + "): " + PJ.anos.map(function (a) { return a.ano + ": deságio nominal " + pct2(a.d) + ", R$ " + f4.format(a.pk) + "/kWh, deságio sobre a tarifa sem impostos " + pct2(a.dimp) + ", sobre a tarifa com impostos " + pct2(a.dV); }).join("; "));
