@@ -9,6 +9,7 @@ Agente diário que acompanha as tarifas homologadas pela ANEEL e mantém um pain
 - **TUSD Fio B, B3 Convencional:** detalhe SCEE (energia compensada, Lei 14.300), só vigências iniciadas a partir de `fiob_ano_inicial` (padrão 01/01/2026).
 - **Grupo A (média e alta tensão), Tarifa de Aplicação:** subgrupos de `subgrupos_grupo_a` (padrão A4 e A3), modalidades Verde e Azul, vigências desde `grupo_a_ano_inicial` (padrão 2016): energia (TUSD+TE, R$/MWh) na ponta e fora ponta e demanda (TUSD, R$/kW; Verde: demanda única; Azul: ponta e fora ponta). TUSD Fio B do Grupo A por posto e unidade desde `fiob_ano_inicial`.
 - **IPCA mensal** (Banco Central, SGS série 433), para comparar a B3 com a inflação.
+- **Tributos (ICMS, PIS e COFINS) e calculadora GD:** tarifa com tributos (V) e valor da energia compensada com os tributos evitados (W), pela mesma regra da planilha Tarifas.xlsx do usuário (ver "Impostos e calculadora GD").
 
 **Nomes comerciais (`distribuidoras.csv`)**
 
@@ -35,6 +36,17 @@ A ANEEL ainda usa siglas antigas (ex.: ELETROPAULO para a Enel SP). O arquivo `d
    - download ou leitura de um Parquet falhou (ou recorte novo com queda > 20%): usa o recorte salvo, avisa no log e no painel (`estado.json`, `avisos_fonte`) e segue;
    - sem recorte salvo, recorte B3 vazio ou snapshot com queda > 20%: nada é sobrescrito, a execução falha e o GitHub avisa por e-mail.
 
+**Impostos e calculadora GD (`impostos_distribuidoras.csv`, `icms_gd_distribuidoras.csv`, `referencia_planilha_tarifas.csv`)**
+
+Três CSVs versionados (ponto e vírgula; o leitor aceita decimal com vírgula ou ponto), lidos ao gerar o painel. Quando mudam, o painel é regerado na próxima coleta.
+- `impostos_distribuidoras.csv`: alíquotas agregadas por distribuidora e subgrupo (TOTAL, B1, B3, Grupo A...), calculadas de cerca de 164 mil faturas: médias de faturas de UCs consumidoras da base Thopen, set-nov/2026. Sem dado de cliente. Colunas da origem, sem `fator_gross_up` (fórmula simples, não a cascata), mais `cnpj` (de-para pelo nome com o `distribuidoras.csv`; a CPFL Jaguari, incorporada, aponta para o CNPJ da CPFL Santa Cruz). O painel usa a média do subgrupo B3 se houver, senão a do TOTAL; sem fatura, ICMS e PIS/COFINS da planilha; sem os dois, ICMS 18% e PIS+COFINS 5%. A fonte de cada alíquota aparece na calculadora e no Excel.
+- `icms_gd_distribuidoras.csv`: por CNPJ, se o ICMS da TE e o da TUSD entram no benefício da energia compensada (`flag_icms_te`, `flag_icms_tusd`), o repasse `s` (50%; 70% na Cemig) e as alíquotas da planilha. Para as 48 distribuidoras da planilha, as flags vêm das fórmulas da coluna W, linha a linha (fonte "planilha Tarifas.xlsx do usuário"); as demais usam a regra mais comum da mesma UF na planilha ("inferido pela UF"; empate desempatado pela regra mais comum no país) ou 0/0 ("padrão, revisar"). Incoerências da planilha foram mantidas e anotadas em `observacao` (RGE 0/0 x CEEE 1/1 no RS, EDP ES 0/1, V34 da CEEE sem ICMS, TUSD/TE copiados entre distribuidoras).
+- `referencia_planilha_tarifas.csv`: TUSD e TE das 48 linhas da planilha (referência fixa), para a Tabela Thopen mostrar o que estava desatualizado.
+
+Regra (igual à planilha, gross-up em cascata): D = TUSD, E = TE, i = ICMS, pc = PIS + COFINS; k_PC = 1/(1-pc); k_full = 1/((1-i)(1-pc)); U = D + E; V = U·k_full; W = (D - FB_ef)·k_TUSD + E·k_TE (k = k_full se o ICMS da parcela entra no benefício, senão k_PC); Y = W - (U - FB_ef); X = s·Y; Z = (U - FB_ef) + X; deságio implícito = 1 - preço/W. GD I: FB_ef = 0 (reproduz a planilha 1:1). GD II/III: FB_ef = Fio B SCEE × % do ano da Lei 14.300 (2026 60%, 2027 75%, 2028 90%). GD III ainda paga 40% do Fio A, TFSEE e P&D/EE, o que não está modelado (aviso na calculadora).
+
+Teste de regressão: `py tests/test_calculadora.py [Tarifas.xlsx]` (casos CPFL Paulista e Cemig; com a planilha, confere as 48 linhas contra o cache dela).
+
 **Por que ler o Parquet de anos anteriores no Fio B**
 
 O arquivo anual de componentes é organizado pelo processo tarifário, não pelo início da vigência. O de 2025 traz vigências que começam em 01/01/2026 (a REH é dividida na virada do escalonamento da Lei 14.300) e o de 2024 traz a CEA de 01/01/2026 a 12/04/2026 (REH 3.430, de 12/2024). Por isso o script lê os arquivos de `fiob_ano_inicial - 2` em diante e filtra por `DatInicioVigencia >= <ano>-01-01`.
@@ -45,10 +57,12 @@ O arquivo anual de componentes é organizado pelo processo tarifário, não pelo
 |---|---|
 | `Painel_Tarifas_ANEEL.html` | Painel interativo (arquivo único, abre no navegador), em abas. Gráficos via Chart.js (CDN, precisa de internet) |
 | Visão geral | KPIs (mediana da B3, valor do kWh compensado mediano, maior e menor, B3 acumulada desde 2016 x IPCA, Fio B, reajustes próximos), avisos de qualidade, índice da B3 nacional x IPCA (01/01/2016 = 100), próximos reajustes e os 10 maiores e 10 menores valores do kWh compensado |
-| Distribuidora | Uma distribuidora (padrão ENEL SP): ficha (sigla, nomes anteriores, UF, grupo, razão social), tarifa atual, Fio B, valor do kWh compensado, posição no ranking, último e próximo reajuste, posição contra as medianas nacional, da região e da UF, composição TUSD x TE x Fio B, acumulado desde 2016, 2020, 12 meses e último reajuste x IPCA (com aumento real), gráfico da B3 contra a B3 de 2016 corrigida pelo IPCA e vigências |
-| Comparador | 2 a 4 distribuidoras (padrão ENEL SP, LIGHT, ENEL RJ e CPFL PIRATININGA): tabela lado a lado (inclui linhas A4 Verde), composição TUSD x TE (com Fio B), valor do kWh compensado, B3 anual e Fio B por vigência |
+| Distribuidora | Uma distribuidora (padrão ENEL SP): ficha (sigla, nomes anteriores, UF, grupo, razão social), tarifa atual, Fio B, valor do kWh compensado, tarifa com tributos (V) e valor compensado com tributos (W), posição no ranking, último e próximo reajuste, posição contra as medianas nacional, da região e da UF, composição TUSD x TE x Fio B, acumulado desde 2016, 2020, 12 meses e último reajuste x IPCA (com aumento real), gráfico da B3 contra a B3 de 2016 corrigida pelo IPCA e vigências |
+| Comparador | 2 a 4 distribuidoras (padrão ENEL SP, LIGHT, ENEL RJ e CPFL PIRATININGA): tabela lado a lado (inclui ICMS, PIS+COFINS, tarifa com tributos V, valor compensado com tributos W em GD II e GD I e linhas A4 Verde), composição TUSD x TE (com Fio B), valor do kWh compensado, B3 anual e Fio B por vigência |
+| Calculadora | Distribuidora (busca por nome comercial ou sigla) preenche UF, vigência atual, TUSD, TE e Fio B SCEE; data de referência (define o % da Lei 14.300), enquadramento GD I/II/III (padrão GD II), ICMS, PIS e COFINS com a fonte, flags de ICMS TE/TUSD, repasse s e preço de venda ou deságio, todos editáveis, com "Restaurar padrões". Saídas em cards e memória de cálculo: U, V, FB_ef, W, Y, X, Z, deságio implícito, economia do cliente por MWh e Fio B residual com tributos. Bloco "Simulação de fatura (estimativa)" com consumo, energia compensada, tipo de ligação, bandeira e CIP |
+| Tabela Thopen | Réplica da planilha Tarifas.xlsx com a tarifa ANEEL vigente: D, E, ICMS, PIS+COFINS, flags, s, U, V, W, Y, X e Z (GD I como na planilha, ou GD II), e para as 48 da planilha a TUSD+TE dela e a diferença. Clique no nome abre a Calculadora |
 | Grupo A | Seletores de subgrupo (A4/A3) e modalidade (Verde/Azul), padrão A4 Verde. KPIs (medianas de energia FP, energia P, demanda, variação do último reajuste, valor compensado FP e Fio B), matriz distribuidora x ano com heatmap (energia FP, energia P, demanda), histórico das distribuidoras do comparador, relação ponta / fora ponta, ranking por métrica, simulador Verde x Azul (demanda kW, consumo MWh/mês e % na ponta; custo mensal sem impostos, bandeiras e ultrapassagem, com ponto de equilíbrio), valor do kWh compensado (FP e P) e Fio B por posto e unidade. A ficha da aba Distribuidora ganhou o bloco Grupo A |
-| Rankings | Ranking (gráfico e tabela completa) por valor do kWh compensado, % da tarifa, B3 total, Fio B, Fio B / TUSD, último reajuste, acumulado e aumento real; matriz distribuidora x ano com heatmap |
+| Rankings | Ranking (gráfico e tabela completa) por valor do kWh compensado, % da tarifa, B3 total, tarifa B3 com impostos (V), valor compensado com tributos (W, GD II), Fio B, Fio B / TUSD, último reajuste, acumulado e aumento real; matriz distribuidora x ano com heatmap |
 | Regiões | Medianas por região e por UF (B3, valor compensado, Fio B, efetivo, acumulado, aumento real), em barras e mapa de calor |
 | Calendário | Vigências que terminam nos próximos 90 dias, com a tarifa atual e a nova homologação, se já publicada |
 | Mudanças / Metodologia | Log do agente e regras de cálculo |
@@ -60,6 +74,8 @@ O arquivo anual de componentes é organizado pelo processo tarifário, não pelo
 | Regioes UF | Medianas por Brasil, região e UF |
 | Calendario | Próximos reajustes (90 dias) |
 | Distribuidoras | O mapa `distribuidoras.csv` com o rótulo usado no painel |
+| Calculadora (tabela) | Tabela Thopen: alíquotas, flags, U, V, W/Y/X/Z em GD I e GD II, Fio B residual com tributos, TUSD+TE da planilha e diferença, fontes e observações |
+| Impostos / Impostos faturas | Alíquotas e flags usadas por distribuidora, com a fonte; agregados das faturas por distribuidora e subgrupo |
 | B3 Total Anual / B3 Var % Anual | Distribuidora x ano (desde 2010), TUSD+TE e variação |
 | FioB SCEE Anual / Efetivo | Distribuidora x ano, desde 2026: Fio B SCEE e efetivo (x % Lei 14.300) |
 | FioB SCEE Ranking | Variação entre a vigência mais recente e a anterior da mesma distribuidora, desde 2026 |

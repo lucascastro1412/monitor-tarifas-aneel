@@ -1,0 +1,116 @@
+cnpj;distribuidora;uf;flag_icms_te;flag_icms_tusd;repasse_s;fonte;icms_planilha;pis_planilha;cofins_planilha;observacao
+07522669000192;Neoenergia Brasília;DF;0;0;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+01377555000110;Chesp;GO;1;1;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+01543032000104;Equatorial GO;GO;0;0;0.5;planilha Tarifas.xlsx do usuário;0.19;0.01;0.05;
+15413826000150;Energisa MS;MS;0;0;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+03467321000199;Energisa MT;MT;1;0;0.5;planilha Tarifas.xlsx do usuário;0.17;0.0099;0.046;
+12272084000100;Equatorial AL;AL;0;0;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+15139629000194;Neoenergia Coelba;BA;0;0;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+07047251000170;Enel CE;CE;0;0;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+06272793000184;Equatorial MA;MA;0;0;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+08826596000195;ENERGISA BORBOREMA;PB;0;0;0.5;inferido pela UF;;;;regra de 1 de 1 distribuidora(s) de PB na planilha
+09095183000140;Energisa PB;PB;0;0;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+10835932000108;Neoenergia Pernambuco;PE;0;0;0.5;planilha Tarifas.xlsx do usuário;0.205;0.0134;0.062;
+06840748000189;Equatorial PI;PI;0;0;0.5;planilha Tarifas.xlsx do usuário;0.225;0.04;0.01;
+08324196000181;Neoenergia Cosern;RN;1;0;0.5;planilha Tarifas.xlsx do usuário;0.2;0.01;0.04;
+13107842000199;CERCOS;SE;1;1;0.5;inferido pela UF;;;;"regra de 1 de 2 distribuidora(s) de SE na planilha (empate na UF; desempate pela regra mais comum no pais)"
+13017462000163;Energisa SE;SE;0;0;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;TUSD e TE na planilha iguais aos de Sulgipe (provavel copia)
+13255658000196;Sulgipe;SE;1;1;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;TUSD e TE na planilha iguais aos de Energisa SE (provavel copia)
+04065033000170;ENERGISA AC;AC;0;0;0.5;padrão, revisar;;;;sem distribuidora da UF na planilha
+02341467000120;Amazonas Energia;AM;1;1;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+05965546000109;CEA EQUATORIAL;AP;0;0;0.5;padrão, revisar;;;;sem distribuidora da UF na planilha
+04895728000180;Equatorial PA;PA;1;1;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+05914650000166;ENERGISA RO;RO;0;0;0.5;padrão, revisar;;;;sem distribuidora da UF na planilha
+05938444000196;CERR;RR;1;1;0.5;inferido pela UF;;;;regra de 1 de 1 distribuidora(s) de RR na planilha
+02341470000144;Roraima Energia;RR;1;1;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+25086034000171;Energisa TO;TO;0;0;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+28152650000171;EDP ES;ES;0;1;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;"so ICMS da TUSD na energia compensada (0/1), unico caso na planilha; mantido como na planilha"
+27485069000109;ELFSM;ES;1;1;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+06981180000116;Cemig-D;MG;1;1;0.7;planilha Tarifas.xlsx do usuário;0.18;0.01;0.05;repasse de 70% do beneficio tributario (planilha X2)
+23664303000104;DMED;MG;1;1;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+19527639000158;Energisa Minas Rio;MG;1;1;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+28610236000169;CERAL ARARUAMA;RJ;1;0;0.5;inferido pela UF;;;;regra de 2 de 2 distribuidora(s) de RJ na planilha
+27707397000102;CERCI;RJ;1;0;0.5;inferido pela UF;;;;regra de 2 de 2 distribuidora(s) de RJ na planilha
+31465487000101;CERES;RJ;1;0;0.5;inferido pela UF;;;;regra de 2 de 2 distribuidora(s) de RJ na planilha
+33050071000158;Enel RJ;RJ;1;0;0.5;planilha Tarifas.xlsx do usuário;0.22;0.01;0.04;
+33249046000106;ENERGISA NOVA FRIBURGO;RJ;1;0;0.5;inferido pela UF;;;;regra de 2 de 2 distribuidora(s) de RJ na planilha
+60444437000146;Light;RJ;1;0;0.5;planilha Tarifas.xlsx do usuário;0.24;0.04;0.0187;
+60196987000193;CEDRAP;SP;1;0;0.5;inferido pela UF;;;;regra de 7 de 7 distribuidora(s) de SP na planilha
+50105865000190;CEDRI;SP;1;0;0.5;inferido pela UF;;;;regra de 7 de 7 distribuidora(s) de SP na planilha
+52777034000190;CEMIRIM;SP;1;0;0.5;inferido pela UF;;;;regra de 7 de 7 distribuidora(s) de SP na planilha
+50235449000107;CERIM;SP;1;0;0.5;inferido pela UF;;;;regra de 7 de 7 distribuidora(s) de SP na planilha
+49606312000132;CERIPA;SP;1;0;0.5;inferido pela UF;;;;regra de 7 de 7 distribuidora(s) de SP na planilha
+57384943000182;CERIS;SP;1;0;0.5;inferido pela UF;;;;regra de 7 de 7 distribuidora(s) de SP na planilha
+52548732000114;CERMC;SP;1;0;0.5;inferido pela UF;;;;regra de 7 de 7 distribuidora(s) de SP na planilha
+53176038000186;CERNHE;SP;1;0;0.5;inferido pela UF;;;;regra de 7 de 7 distribuidora(s) de SP na planilha
+44560381000139;CERPRO;SP;1;0;0.5;inferido pela UF;;;;regra de 7 de 7 distribuidora(s) de SP na planilha
+46598678000119;CERRP;SP;1;0;0.5;inferido pela UF;;;;regra de 7 de 7 distribuidora(s) de SP na planilha
+55188502000180;CERVAM;SP;1;0;0.5;inferido pela UF;;;;regra de 7 de 7 distribuidora(s) de SP na planilha
+49313653000110;CETRIL;SP;1;0;0.5;inferido pela UF;;;;regra de 7 de 7 distribuidora(s) de SP na planilha
+61015582000174;CPFL LESTE PAULISTA;SP;1;0;0.5;inferido pela UF;;;;regra de 7 de 7 distribuidora(s) de SP na planilha
+52503802000118;CPFL MOCOCA;SP;1;0;0.5;inferido pela UF;;;;regra de 7 de 7 distribuidora(s) de SP na planilha
+33050196000188;CPFL Paulista;SP;1;0;0.5;planilha Tarifas.xlsx do usuário;0.18;0.01;0.04;
+04172213000151;CPFL Piratininga;SP;1;0;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+53859112000169;CPFL Santa Cruz;SP;1;0;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+61116265000144;CPFL SANTA CRUZ (ANTIGA);SP;1;0;0.5;inferido pela UF;;;;regra de 7 de 7 distribuidora(s) de SP na planilha
+60855608000120;CPFL SUL PAULISTA;SP;1;0;0.5;inferido pela UF;;;;regra de 7 de 7 distribuidora(s) de SP na planilha
+02302100000106;EDP SP;SP;1;0;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+61695227000193;Enel SP;SP;1;0;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+60942281000123;ENERGISA BRAGANTINA;SP;1;0;0.5;inferido pela UF;;;;regra de 7 de 7 distribuidora(s) de SP na planilha
+61416244000144;ENERGISA CNEE;SP;1;0;0.5;inferido pela UF;;;;regra de 7 de 7 distribuidora(s) de SP na planilha
+07282377000120;Energisa Sul Sudeste;SP;1;0;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+07297359000111;ENERGISA VALE PARANAPANEMA;SP;1;0;0.5;inferido pela UF;;;;regra de 7 de 7 distribuidora(s) de SP na planilha
+02328280000197;Neoenergia Elektro;SP;1;0;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+30460297000139;CASTRO DIS;PR;1;1;0.5;inferido pela UF;;;;regra de 2 de 3 distribuidora(s) de PR na planilha
+10532365000110;CERAL ARAPOTI;PR;1;1;0.5;inferido pela UF;;;;regra de 2 de 3 distribuidora(s) de PR na planilha
+75805895000130;Cocel;PR;1;1;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+04368898000106;Copel-DIS;PR;1;0;0.5;planilha Tarifas.xlsx do usuário;0.19;0.04;0.01;
+77882504000107;ENERGISA CFLO;PR;1;1;0.5;inferido pela UF;;;;regra de 2 de 3 distribuidora(s) de PR na planilha
+79850574000109;Pacto Energia;PR;1;1;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+08467115000100;Equatorial CEEE;RS;1;1;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;"Tarifa Cheia (V34) da planilha sem ICMS: erro; a calculadora usa a formula padrao; ICMS TE e TUSD na energia compensada (1/1), diferente da RGE (0/0) no mesmo RS; mantido como na planilha"
+87776043000141;CELETRO;RS;1;1;0.5;inferido pela UF;;;;regra de 6 de 7 distribuidora(s) de RS na planilha
+97505838000179;CERFOX;RS;1;1;0.5;inferido pela UF;;;;regra de 6 de 7 distribuidora(s) de RS na planilha
+87656989000174;CERILUZ;RS;1;1;0.5;inferido pela UF;;;;regra de 6 de 7 distribuidora(s) de RS na planilha
+97081434000103;CERMISSÕES;RS;1;1;0.5;inferido pela UF;;;;regra de 6 de 7 distribuidora(s) de RS na planilha
+97839922000129;CERTAJA;RS;1;1;0.5;inferido pela UF;;;;regra de 6 de 7 distribuidora(s) de RS na planilha
+09257558000121;CERTEL ENERGIA;RS;1;1;0.5;inferido pela UF;;;;regra de 6 de 7 distribuidora(s) de RS na planilha
+98042963000152;CERTHIL;RS;1;1;0.5;inferido pela UF;;;;regra de 6 de 7 distribuidora(s) de RS na planilha
+95824322000161;COOPERLUZ;RS;1;1;0.5;inferido pela UF;;;;regra de 6 de 7 distribuidora(s) de RS na planilha
+88022918000182;COOPERNORTE;RS;1;1;0.5;inferido pela UF;;;;regra de 6 de 7 distribuidora(s) de RS na planilha
+87462750000163;COOPERSUL;RS;1;1;0.5;inferido pela UF;;;;regra de 6 de 7 distribuidora(s) de RS na planilha
+90660754000160;COPREL;RS;1;1;0.5;inferido pela UF;;;;regra de 6 de 7 distribuidora(s) de RS na planilha
+91950261000128;CRELUZ;RS;1;1;0.5;inferido pela UF;;;;regra de 6 de 7 distribuidora(s) de RS na planilha
+89435598000155;CRERAL;RS;1;1;0.5;inferido pela UF;;;;regra de 6 de 7 distribuidora(s) de RS na planilha
+95289500000100;Demei;RS;1;1;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+88446034000155;Eletrocar;RS;1;1;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+91982348000187;Hidropan;RS;1;1;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+97578090000134;MuxEnergia;RS;1;1;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+89889604000144;Nova Palma;RS;1;1;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+02016440000162;RGE;RS;0;0;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;"sem ICMS na energia compensada (0/0), diferente da Equatorial CEEE (1/1) e das demais do RS; mantido como na planilha"
+02016439000138;RGE (ANTIGA);RS;1;1;0.5;inferido pela UF;;;;regra de 6 de 7 distribuidora(s) de RS na planilha
+86444163000189;CEGERO;SC;1;1;0.5;inferido pela UF;;;;regra de 4 de 5 distribuidora(s) de SC na planilha
+85665990000130;CEJAMA;SC;1;1;0.5;inferido pela UF;;;;regra de 4 de 5 distribuidora(s) de SC na planilha
+08336783000190;Celesc-DIS;SC;0;0;0.5;planilha Tarifas.xlsx do usuário;0.17;0.0123;0.0567;TUSD e TE na planilha iguais aos de Cooperaliança, EFLJC (provavel copia)
+78274610000170;CEPRAG;SC;1;1;0.5;inferido pela UF;;;;regra de 4 de 5 distribuidora(s) de SC na planilha
+75826404000138;CERAL ANITÁPOLIS;SC;1;1;0.5;inferido pela UF;;;;regra de 4 de 5 distribuidora(s) de SC na planilha
+09364804000144;CERAÇÁ;SC;1;1;0.5;inferido pela UF;;;;regra de 4 de 5 distribuidora(s) de SC na planilha
+86433042000131;CERBRANORTE;SC;1;1;0.5;inferido pela UF;;;;regra de 4 de 5 distribuidora(s) de SC na planilha
+82574864000181;CEREJ;SC;1;1;0.5;inferido pela UF;;;;regra de 4 de 5 distribuidora(s) de SC na planilha
+86439510000185;CERGAL;SC;1;1;0.5;inferido pela UF;;;;regra de 4 de 5 distribuidora(s) de SC na planilha
+01229747000189;CERGAPA;SC;1;1;0.5;inferido pela UF;;;;regra de 4 de 5 distribuidora(s) de SC na planilha
+86449170000173;CERGRAL;SC;1;1;0.5;inferido pela UF;;;;regra de 4 de 5 distribuidora(s) de SC na planilha
+86533346000170;CERMOFUL;SC;1;1;0.5;inferido pela UF;;;;regra de 4 de 5 distribuidora(s) de SC na planilha
+85318640000105;CERPALO;SC;1;1;0.5;inferido pela UF;;;;regra de 4 de 5 distribuidora(s) de SC na planilha
+11615872000180;CERSAD;SC;1;1;0.5;inferido pela UF;;;;regra de 4 de 5 distribuidora(s) de SC na planilha
+86512670000102;CERSUL;SC;1;1;0.5;inferido pela UF;;;;regra de 4 de 5 distribuidora(s) de SC na planilha
+76583962000182;CERTREL;SC;1;1;0.5;inferido pela UF;;;;regra de 4 de 5 distribuidora(s) de SC na planilha
+11810343000138;CODESAM;SC;1;1;0.5;inferido pela UF;;;;regra de 4 de 5 distribuidora(s) de SC na planilha
+83646653000170;COOPERA;SC;1;1;0.5;inferido pela UF;;;;regra de 4 de 5 distribuidora(s) de SC na planilha
+83647990000181;Cooperaliança;SC;1;1;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;TUSD e TE na planilha iguais aos de Celesc-DIS, EFLJC (provavel copia)
+86532348000145;COOPERCOCAL;SC;1;1;0.5;inferido pela UF;;;;regra de 4 de 5 distribuidora(s) de SC na planilha
+75568154000183;COOPERMILA;SC;1;1;0.5;inferido pela UF;;;;regra de 4 de 5 distribuidora(s) de SC na planilha
+78829843000192;COOPERZEM;SC;1;1;0.5;inferido pela UF;;;;regra de 4 de 5 distribuidora(s) de SC na planilha
+86448057000173;COORSEL;SC;1;1;0.5;inferido pela UF;;;;regra de 4 de 5 distribuidora(s) de SC na planilha
+83855973000130;Dcelt;SC;1;1;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+86531175000140;Eflul;SC;1;1;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;
+86301124000122;EFLJC;SC;1;1;0.5;planilha Tarifas.xlsx do usuário;0.18;0.04;0.01;TUSD e TE na planilha iguais aos de Celesc-DIS, Cooperaliança (provavel copia)

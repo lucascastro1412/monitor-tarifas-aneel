@@ -1426,6 +1426,8 @@ def textos_metodologia(visoes: dict, cfg: dict) -> list[str]:
         "TE SCEE = componentes nao associadas ao custo da energia (Lei 14.300, art. 17, regra apos a transicao). "
         "Essa linha nao entra nos calculos do painel (a GD II na transicao paga so o % do Fio B).",
         "",
+        *textos_impostos(visoes),
+        "",
         *textos_grupo_a(cfg),
         "",
         "Distribuidoras do portfolio (config.json): " + (", ".join(cfg["distribuidoras_portfolio"]) or "todas"),
@@ -1459,6 +1461,217 @@ def textos_grupo_a(cfg: dict) -> list[str]:
         "Simulador Verde x Azul (painel): custo mensal estimado = demanda x tarifa de demanda (Azul: a mesma "
         "demanda contratada na ponta e fora ponta) + consumo fora ponta x energia FP + consumo na ponta x energia "
         "P. Estimativa sem impostos, sem bandeiras, sem ultrapassagem e sem reativos.",
+    ]
+
+
+# ------------------------------------------------------------ impostos e calculadora GD
+
+ARQ_IMPOSTOS = "impostos_distribuidoras.csv"          # aliquotas medias das faturas, por distribuidora e subgrupo
+ARQ_ICMS_GD = "icms_gd_distribuidoras.csv"            # flags de ICMS na energia compensada e repasse s
+ARQ_REF_PLANILHA = "referencia_planilha_tarifas.csv"  # TUSD e TE da planilha Tarifas.xlsx (referencia fixa)
+ARQS_IMPOSTOS = (ARQ_IMPOSTOS, ARQ_ICMS_GD, ARQ_REF_PLANILHA)
+ORIGEM_FATURAS = "médias de faturas de UCs consumidoras da base Thopen, set-nov/2026"
+ICMS_PADRAO, PIS_PADRAO, COFINS_PADRAO = 0.18, 0.01, 0.04  # PIS+COFINS padrao 5%
+REPASSE_PADRAO = 0.5
+FONTE_FLAG_PADRAO = "padrão, revisar"
+
+
+def escalonamento_ano(ano: int) -> float:
+    """% do Fio B pago na energia compensada (GD II/III, Lei 14.300) no ano. Antes de 2023: 0;
+    2029 em diante: regra ANEEL nao modelada, aproximada por 100%."""
+    if ano < min(ESCALONAMENTO_FIOB):
+        return 0.0
+    return ESCALONAMENTO_FIOB.get(ano, 1.0)
+
+
+def calc_gd(tusd: float, te: float, icms: float, pc: float, flag_te: int = 1, flag_tusd: int = 1,
+            s: float = REPASSE_PADRAO, fb_ef: float = 0.0, preco: float | None = None) -> dict:
+    """Tarifa com tributos e valor da energia compensada, como na planilha Tarifas.xlsx (gross-up em cascata).
+
+    D = TUSD, E = TE, i = ICMS, pc = PIS + COFINS; k_PC = 1/(1-pc); k_full = 1/((1-i)(1-pc)).
+    U = D + E; V = U.k_full; W = (D - FB_ef).k_TUSD + E.k_TE (k = k_full se o ICMS da parcela entra no
+    beneficio, senao k_PC); Y = W - (U - FB_ef); X = s.Y; Z = (U - FB_ef) + X. GD I: FB_ef = 0 (planilha 1:1).
+    """
+    k_pc = 1 / (1 - pc)
+    k_full = 1 / ((1 - icms) * (1 - pc))
+    k_te = k_full if flag_te else k_pc
+    k_tusd = k_full if flag_tusd else k_pc
+    u = tusd + te
+    w = (tusd - fb_ef) * k_tusd + te * k_te
+    y = w - (u - fb_ef)
+    x = s * y
+    r = {"k_pc": k_pc, "k_full": k_full, "k_te": k_te, "k_tusd": k_tusd, "U": u, "V": u * k_full,
+         "fb_ef": fb_ef, "W": w, "Y": y, "X": x, "Z": (u - fb_ef) + x, "fb_res": fb_ef * k_full,
+         "desagio": None, "economia": None}
+    if preco is not None and w:
+        r["desagio"] = 1 - preco / w
+        r["economia"] = w - preco
+    return r
+
+
+def _arq_base(base: Path, nome: str) -> Path | None:
+    for arq in (base / nome, Path(__file__).resolve().parent / nome):
+        if arq.exists():
+            return arq
+    return None
+
+
+def ler_csv_pv(base: Path, nome: str) -> pd.DataFrame | None:
+    """CSV com ';' (ou ','), texto; numeros sao lidos com para_numero (aceita 0,18 e 0.18)."""
+    arq = _arq_base(base, nome)
+    if arq is None:
+        return None
+    df = pd.read_csv(arq, dtype=str, keep_default_na=False, encoding="utf-8-sig", sep=None, engine="python")
+    df.columns = [c.strip().lower() for c in df.columns]
+    for c in df.columns:
+        df[c] = df[c].astype(str).str.strip()
+    if "cnpj" in df.columns:
+        df["cnpj"] = df["cnpj"].str.replace(r"\D", "", regex=True).str.zfill(14)
+    return df
+
+
+def hash_impostos(base: Path) -> str:
+    """Assinatura dos CSVs de impostos (regera o painel quando mudam)."""
+    h = hashlib.sha1()
+    for nome in ARQS_IMPOSTOS:
+        arq = _arq_base(base, nome)
+        h.update(arq.read_bytes() if arq else b"-")
+    return h.hexdigest()
+
+
+def _aliquotas_faturas(imp: pd.DataFrame | None) -> dict[str, dict]:
+    """CNPJ -> aliquotas medias das faturas: subgrupo B3 se houver, senao TOTAL (linha com mais faturas)."""
+    if imp is None or not len(imp):
+        return {}
+    d = imp.copy()
+    for c in ("n_faturas", "icms_media", "pis_media", "cofins_media"):
+        d[c] = d[c].map(para_numero)
+    d = d[d["icms_media"].notna() & d["pis_media"].notna() & d["cofins_media"].notna()]
+    out = {}
+    for cnpj, g in d.groupby("cnpj"):
+        for sub in ("B3", "TOTAL"):
+            x = g[g["subgrupo_classe"].str.upper() == sub]
+            if len(x):
+                r = x.sort_values("n_faturas", ascending=False).iloc[0]
+                nominal = "nominal" in r["observacao"].lower()
+                n_fat = f"{int(r['n_faturas']):,}".replace(",", ".")
+                fonte = f"faturas {sub} ({n_fat} faturas, {r['mes_ref_inicio']} a {r['mes_ref_fim']})"
+                out[cnpj] = {"icms": r["icms_media"], "pis": r["pis_media"], "cofins": r["cofins_media"],
+                             "fonte": fonte, "nominal": nominal, "nome_fatura": r["distribuidora"]}
+                break
+    return out
+
+
+def tabela_impostos(visoes: dict, base: Path) -> pd.DataFrame:
+    """Uma linha por distribuidora do painel (indice = rotulo): aliquotas (com a fonte), flags de ICMS na energia
+    compensada, repasse s, valores da calculadora em GD I (planilha) e GD II (Fio B efetivo da vigencia atual) e a
+    referencia da planilha Tarifas.xlsx."""
+    met = visoes["metricas"]
+    fat = _aliquotas_faturas(ler_csv_pv(base, ARQ_IMPOSTOS))
+    gd = ler_csv_pv(base, ARQ_ICMS_GD)
+    gd = gd.drop_duplicates("cnpj", keep="last").set_index("cnpj") if gd is not None else pd.DataFrame()
+    ref = ler_csv_pv(base, ARQ_REF_PLANILHA)
+    ref = ({r["sigla"]: (para_numero(r["tusd"]), para_numero(r["te"])) for _, r in ref.iterrows()}
+           if ref is not None else {})
+    linhas = []
+    for d, m in met.iterrows():
+        c = m["cnpj"]
+        g = gd.loc[c] if c in gd.index else None
+        num = lambda col: para_numero(g[col]) if g is not None and col in g.index else float("nan")  # noqa: E731
+        da_planilha = g is not None and g["fonte"].startswith("planilha")
+        f = fat.get(c)
+        if f:
+            icms, pis, cofins = f["icms"], f["pis"], f["cofins"]
+            fonte_i = fonte_pc = f["fonte"]
+            if f["nominal"]:
+                fonte_pc += "; PIS/COFINS nominal na fatura"
+        elif pd.notna(num("icms_planilha")) and pd.notna(num("pis_planilha")):
+            icms, pis, cofins = num("icms_planilha"), num("pis_planilha"), num("cofins_planilha")
+            fonte_i = fonte_pc = "planilha Tarifas.xlsx (sem dado de fatura)"
+        else:
+            icms, pis, cofins = ICMS_PADRAO, PIS_PADRAO, COFINS_PADRAO
+            fonte_i, fonte_pc = "padrão 18% (sem fatura nem planilha)", "padrão 5% (sem fatura nem planilha)"
+        pc = pis + cofins
+        if g is not None:
+            fte, ftu, s = int(num("flag_icms_te")), int(num("flag_icms_tusd")), num("repasse_s")
+            fonte_f, obs = g["fonte"], g.get("observacao", "")
+        else:
+            fte, ftu, s, fonte_f, obs = 0, 0, REPASSE_PADRAO, FONTE_FLAG_PADRAO, "fora de icms_gd_distribuidoras.csv"
+        s = REPASSE_PADRAO if pd.isna(s) else s
+        g1 = calc_gd(m["tusd"], m["te"], icms, pc, fte, ftu, s)
+        ok_fb = pd.notna(m["fiob_efetivo"]) and not m["fiob_suspeito"]
+        g2 = calc_gd(m["tusd"], m["te"], icms, pc, fte, ftu, s, m["fiob_efetivo"]) if ok_fb else None
+        sigla = g["distribuidora"] if da_planilha else ""
+        rt, re_ = ref.get(sigla, (None, None)) if sigla else (None, None)
+        ref_tot = rt + re_ if rt is not None and re_ is not None else None
+        linhas.append({
+            "distribuidora": d, "cnpj": c, "icms": icms, "pis": pis, "cofins": cofins, "pc": pc,
+            "fonte_icms": fonte_i, "fonte_pc": fonte_pc, "flag_te": fte, "flag_tusd": ftu, "s": s,
+            "fonte_flags": fonte_f, "obs": obs,
+            "U": g1["U"], "V": g1["V"], "W1": g1["W"], "Y1": g1["Y"], "X1": g1["X"], "Z1": g1["Z"],
+            "fb_ef": m["fiob_efetivo"] if ok_fb else None,
+            "W2": g2["W"] if g2 else None, "Y2": g2["Y"] if g2 else None, "X2": g2["X"] if g2 else None,
+            "Z2": g2["Z"] if g2 else None, "fb_res": g2["fb_res"] if g2 else None,
+            "ref_sigla": sigla, "ref_tusd": rt, "ref_te": re_, "ref_total": ref_tot,
+            "ref_dif": g1["U"] - ref_tot if ref_tot is not None else None,
+        })
+    t = pd.DataFrame(linhas).set_index("distribuidora")
+    for c in ("fb_ef", "W2", "Y2", "X2", "Z2", "fb_res", "ref_tusd", "ref_te", "ref_total", "ref_dif"):
+        t[c] = pd.to_numeric(t[c], errors="coerce")
+    return t
+
+
+def impostos_faturas_excel(base: Path) -> pd.DataFrame:
+    imp = ler_csv_pv(base, ARQ_IMPOSTOS)
+    if imp is None:
+        return pd.DataFrame()
+    num = ["n_faturas", "n_ucs", "icms_media", "icms_mediana", "icms_min", "icms_max", "pis_media",
+           "cofins_media", "pis_cofins_ultimo_mes", "descartadas"]
+    for c in num:
+        if c in imp.columns:
+            imp[c] = imp[c].map(para_numero)
+    return imp
+
+
+def textos_impostos(visoes: dict) -> list[str]:
+    imp = visoes.get("imp")
+    cont = ""
+    if imp is not None and len(imp):
+        n = imp["fonte_flags"].map(lambda f: "planilha" if f.startswith("planilha") else
+                                   ("uf" if f.startswith("inferido") else "padrao")).value_counts()
+        nf = imp["fonte_icms"].str.startswith("faturas").sum()
+        cont = (f" Neste painel: aliquotas de faturas para {nf} de {len(imp)} distribuidoras; flags da planilha "
+                f"{n.get('planilha', 0)}, inferidas pela UF {n.get('uf', 0)}, padrao {n.get('padrao', 0)}.")
+    esc = ", ".join(f"{a} {int(v * 100)}%" for a, v in ESCALONAMENTO_FIOB.items())
+    return [
+        "IMPOSTOS E CALCULADORA GD (aba Calculadora, Tabela Thopen e colunas com tributos): mesma regra da planilha "
+        "Tarifas.xlsx do usuario, com gross-up em cascata. D = TUSD, E = TE, i = ICMS, pc = PIS + COFINS; "
+        "k_PC = 1/(1-pc); k_full = 1/((1-i)(1-pc)).",
+        "U (tarifa sem tributos) = D + E. V (tarifa cheia, com tributos) = U x k_full. W (valor da energia compensada, "
+        "com os tributos evitados) = (D - FB_ef) x k_TUSD + E x k_TE, com k_TE = k_full se o ICMS da TE entra no "
+        "beneficio (flag 1) e k_PC se nao entra (flag 0); k_TUSD idem. Y (beneficio tributario) = W - (U - FB_ef). "
+        "X (VB) = s x Y, s = repasse (50%; 70% na Cemig, como na planilha). Z (COMP) = (U - FB_ef) + X. "
+        "Desagio implicito = 1 - preco de venda / W. Fio B residual com tributos = FB_ef x k_full.",
+        f"FB_ef: GD I = 0 (reproduz a planilha 1:1); GD II e GD III = Fio B SCEE x % do ano da Lei 14.300 ({esc}; "
+        "2029 em diante aproximado por 100%). Na calculadora o % vem da data de referencia; nas demais abas, "
+        "W GD II usa o Fio B efetivo da vigencia atual. GD III pela Lei 14.300 (art. 27, par. 1o) paga ainda 40% do "
+        "Fio A, TFSEE e P&D/EE, o que nao esta modelado.",
+        f"Aliquotas: {ORIGEM_FATURAS} ({ARQ_IMPOSTOS}): media do subgrupo B3 se houver, senao TOTAL. Sem dado de "
+        "fatura: ICMS e PIS/COFINS da planilha Tarifas.xlsx; sem os dois: ICMS 18% e PIS+COFINS 5%. A fonte de cada "
+        "aliquota aparece na calculadora e no Excel (aba Impostos). PIS/COFINS variam mes a mes (credito apurado "
+        "pela distribuidora); as Energisa MT, TO, MS e Minas Rio informam na fatura a aliquota nominal (1,65% e "
+        "7,6%), nao a efetiva, entao o PIS/COFINS delas fica superestimado.",
+        f"Flags de ICMS na energia compensada e repasse ({ARQ_ICMS_GD}): extraidas das formulas da coluna W da "
+        "planilha, linha a linha (W = V: 1/1; so ICMS TE: 1/0; so TUSD: 0/1; sem ICMS: 0/0). Distribuidoras fora "
+        "da planilha: regra mais comum entre as da mesma UF na planilha ('inferido pela UF'); UF sem nenhuma: 0/0 "
+        "('padrao, revisar'). Incoerencias da planilha foram mantidas e anotadas (ex.: RGE 0/0 x CEEE 1/1 no RS; "
+        "EDP ES 0/1; V34 da CEEE sem ICMS, erro da planilha, aqui com a formula padrao)." + cont,
+        f"Tabela Thopen: replica a planilha com a tarifa ANEEL vigente; para as 48 distribuidoras da planilha mostra "
+        f"tambem TUSD+TE da planilha ({ARQ_REF_PLANILHA}, referencia fixa) e a diferenca, para ver o que estava "
+        "desatualizado.",
+        "Simulacao de fatura (calculadora): estimativa com regras simplificadas (energia compensada limitada ao "
+        "consumo menos o custo de disponibilidade; bandeira com tributos sobre a energia nao compensada; CIP fixa; "
+        "sem demais itens da fatura).",
     ]
 
 
@@ -1537,6 +1750,51 @@ CABEC_RS |= {"TUSD energia FP", "TE energia FP", "Energia FP", "TUSD energia P",
              "Demanda", "Demanda FP", "Fio B energia FP", "Fio B energia P", "Fio B demanda", "Fio B demanda FP",
              "Fio B efetivo energia FP", "Fio B efetivo energia P", "Valor kWh compensado FP",
              "Valor kWh compensado P", "Relacao P/FP energia", "Relacao P/FP demanda"}
+
+
+# Calculadora e impostos
+CABEC_PCT |= {"ICMS", "PIS", "COFINS", "PIS+COFINS", "Repasse s", "Diferenca % vs planilha",
+              "icms_media", "icms_mediana", "icms_min", "icms_max", "pis_media", "cofins_media",
+              "pis_cofins_ultimo_mes"}
+CABEC_RS |= {"U tarifa sem tributos", "V tarifa cheia", "W GD I", "Y GD I", "X GD I", "Z GD I", "W GD II",
+             "Y GD II", "X GD II", "Z GD II", "Fio B residual com tributos", "TUSD planilha", "TE planilha",
+             "TUSD+TE na planilha", "Diferenca vs planilha"}
+
+
+def abas_impostos(visoes: dict) -> list[tuple]:
+    """Abas do Excel: Calculadora (tabela) = Tabela Thopen (GD I como na planilha + GD II), Impostos (aliquotas e
+    flags usadas por distribuidora) e Impostos faturas (agregados por distribuidora e subgrupo)."""
+    imp, met = visoes.get("imp"), visoes["metricas"]
+    if imp is None or not len(imp):
+        return []
+    m = met.join(imp.drop(columns=["cnpj"]), how="left")
+    m = m.assign(Distribuidora=m.index).sort_values(["ativa", "Distribuidora"], ascending=[False, True])
+    data = lambda s: s.map(lambda v: data_br(v) if isinstance(v, str) else v)  # noqa: E731
+    flag = lambda s: s.map(lambda v: "Sim" if v == 1 else "Nao")  # noqa: E731
+    calc = pd.DataFrame({
+        "Distribuidora": m["Distribuidora"], "UF": m["uf"], "Ativa": m["ativa"].map(lambda v: "Sim" if v else "Nao"),
+        "Inicio vigencia": data(m["inicio"]), "TUSD": m["tusd"], "TE": m["te"], "ICMS": m["icms"],
+        "PIS+COFINS": m["pc"], "ICMS da TE na compensada": flag(m["flag_te"]),
+        "ICMS da TUSD na compensada": flag(m["flag_tusd"]), "Repasse s": m["s"],
+        "U tarifa sem tributos": m["U"], "V tarifa cheia": m["V"], "W GD I": m["W1"], "Y GD I": m["Y1"],
+        "X GD I": m["X1"], "Z GD I": m["Z1"], "Fio B SCEE": m["fiob"].where(~m["fiob_suspeito"]),
+        "% Lei 14.300": m["escalonamento"], "Fio B efetivo": m["fb_ef"], "W GD II": m["W2"], "Y GD II": m["Y2"],
+        "X GD II": m["X2"], "Z GD II": m["Z2"], "Fio B residual com tributos": m["fb_res"],
+        "Sigla na planilha": m["ref_sigla"], "TUSD+TE na planilha": m["ref_total"],
+        "Diferenca vs planilha": m["ref_dif"], "Diferenca % vs planilha": m["ref_dif"] / m["ref_total"],
+        "Fonte aliquotas": m["fonte_icms"], "Fonte flags": m["fonte_flags"], "Observacao": m["obs"],
+        "CNPJ": m["cnpj"]})
+    aliq = pd.DataFrame({
+        "Distribuidora": m["Distribuidora"], "CNPJ": m["cnpj"], "UF": m["uf"], "ICMS": m["icms"],
+        "Fonte ICMS": m["fonte_icms"], "PIS": m["pis"], "COFINS": m["cofins"], "PIS+COFINS": m["pc"],
+        "Fonte PIS/COFINS": m["fonte_pc"], "ICMS da TE na compensada": flag(m["flag_te"]),
+        "ICMS da TUSD na compensada": flag(m["flag_tusd"]), "Repasse s": m["s"], "Fonte flags": m["fonte_flags"],
+        "Observacao": m["obs"]})
+    abas = [("Calculadora (tabela)", calc, False, "tl"), ("Impostos", aliq, False, "tl")]
+    fat = visoes.get("imp_faturas")
+    if fat is not None and len(fat):
+        abas.append(("Impostos faturas", fat, False, "tl"))
+    return abas
 
 
 def abas_grupo_a(visoes: dict) -> list[tuple]:
@@ -1732,6 +1990,7 @@ def gerar_painel(caminho: Path, visoes: dict, log_path: Path, cfg: dict, agora: 
     abas = [
         ("Leia-me", leiame, False, None),
         *abas_extra,
+        *abas_impostos(visoes),
         ("B3 Total Anual", visoes["m_tarifa"], True, "rs"),
         ("B3 Var % Anual", variacao(visoes["m_tarifa"]), True, "pct"),
         ("FioB SCEE Anual", visoes["m_fiob_scee"], True, "rs"),
@@ -1768,7 +2027,8 @@ def gerar_painel(caminho: Path, visoes: dict, log_path: Path, cfg: dict, agora: 
                 letra = get_column_letter(j)
                 h = str(cabecalhos[j - 1] or "")
                 largura = 34 if j == 1 or h in ("Resolucao", "Distribuidora") else 14
-                if h in ("Resolucao", "Razao social", "Distribuidoras"):
+                if h in ("Resolucao", "Razao social", "Distribuidoras", "Observacao", "observacao", "Fonte aliquotas",
+                         "Fonte ICMS", "Fonte PIS/COFINS", "Fonte flags"):
                     largura = 60
                 ws.column_dimensions[letra].width = largura
                 if j == 1 and com_indice:
@@ -1909,7 +2169,8 @@ def dados_html(visoes: dict, log_path: Path, cfg: dict, agora: datetime, estado:
     gm = (visoes.get("ga") or {}).get("met")
     dists = sorted(set(mt.index) | set(ms.index) | set(met.index)
                    | (set(gm["distribuidora"]) if gm is not None and len(gm) else set()))
-    info, mj = {}, {}
+    info, mj, ref = {}, {}, {}
+    imp = visoes.get("imp")
     for d in dists:
         if d not in met.index:
             info[d] = {"s": d, "n": d, "uf": "", "r": "", "g": "", "rz": "", "ufs": "", "a": False, "b": _busca(d)}
@@ -1937,6 +2198,14 @@ def dados_html(visoes: dict, log_path: Path, cfg: dict, agora: datetime, estado:
             "pv": _num(r["prox_var"], 6), "preh": reh_curta(_txt(r["prox_reh"])) if _txt(r["prox_reh"]) else "",
             "rk": rank("rank_b3"), "rf": rank("rank_fiob"), "rc": rank("rank_comp"),
         }
+        if imp is not None and d in imp.index:
+            x = imp.loc[d]
+            mj[d]["tx"] = {"i": _num(x["icms"], 6), "pis": _num(x["pis"], 6), "cof": _num(x["cofins"], 6),
+                           "fi": _txt(x["fonte_icms"]), "fp": _txt(x["fonte_pc"]), "te": int(x["flag_te"]),
+                           "tu": int(x["flag_tusd"]), "s": _num(x["s"], 4), "ff": _txt(x["fonte_flags"]),
+                           "ob": _txt(x["obs"])}
+            if x["ref_sigla"]:
+                ref[d] = [x["ref_sigla"], _num(x["ref_tusd"], 2), _num(x["ref_te"], 2)]
 
     tl = {}
     for d, g in tl_t.groupby("distribuidora"):
@@ -2040,6 +2309,9 @@ def dados_html(visoes: dict, log_path: Path, cfg: dict, agora: datetime, estado:
         "log": log_json,
         "metodologia": textos_metodologia(visoes, cfg),
         "ga": dados_grupo_a_html(visoes),
+        "ref": ref,
+        "imp": {"origem": ORIGEM_FATURAS, "padrao": {"i": ICMS_PADRAO, "pis": PIS_PADRAO, "cof": COFINS_PADRAO,
+                                                     "s": REPASSE_PADRAO}},
     }
 
 
@@ -2159,6 +2431,8 @@ a{color:var(--azul2)}
     <button data-aba="geral" class="ativo">Visão geral</button>
     <button data-aba="distribuidora">Distribuidora</button>
     <button data-aba="comparador">Comparador</button>
+    <button data-aba="calculadora">Calculadora</button>
+    <button data-aba="thopen">Tabela Thopen</button>
     <button data-aba="grupoa">Grupo A</button>
     <button data-aba="rankings">Rankings</button>
     <button data-aba="regioes">Regiões</button>
@@ -2223,7 +2497,7 @@ a{color:var(--azul2)}
     <div class="chips" id="chips"></div>
   </section>
   <section class="card"><h2>Lado a lado</h2><div class="tab" id="lado"></div>
-    <div class="mut" style="margin-top:6px">Valores em R$/MWh, sem tributos. Vigência atual: a última iniciada até a data do painel.</div></section>
+    <div class="mut" style="margin-top:6px">Valores em R$/MWh, sem tributos, exceto as linhas "com tributos" (V e W, gross-up em cascata como na planilha Tarifas.xlsx; detalhes na aba Calculadora e na Metodologia). Vigência atual: a última iniciada até a data do painel.</div></section>
   <section class="grid dois">
     <div class="card"><h2>Composição TUSD x TE (R$/MWh)</h2><div class="graf"><canvas id="g-comp"></canvas></div>
       <div class="mut">Fio B (SCEE) é parte da TUSD; a participação dele na TUSD aparece no rótulo.</div></div>
@@ -2234,6 +2508,72 @@ a{color:var(--azul2)}
     <div class="card"><h2>B3 total TUSD+TE (R$/MWh) por ano</h2><div class="graf"><canvas id="g-b3"></canvas></div></div>
     <div class="card"><h2 id="fiob-tit">Fio B SCEE (R$/MWh) por vigência</h2><div class="graf"><canvas id="g-fiob"></canvas></div>
       <div class="mut">Linha cheia: Fio B SCEE homologado. Tracejada: efetivo (x % da Lei 14.300). Cada degrau é uma vigência.</div></div>
+  </section>
+</div>
+
+<!-- ============ CALCULADORA ============ -->
+<div class="aba" id="aba-calculadora">
+  <section class="card" style="margin-top:0">
+    <div class="barra"><h2 style="margin:0">Calculadora GD: tarifa com tributos e valor da energia compensada</h2><span class="esp"></span>
+      <button class="btn" id="c-reset">Restaurar padrões</button></div>
+    <div class="seletor"><input type="search" id="c-busca" placeholder="Buscar distribuidora por nome comercial ou sigla (ex.: Enel SP, Eletropaulo, CPFL)" autocomplete="off">
+      <div class="lista" id="c-lista"></div></div>
+    <div style="margin-top:10px"><div class="nomegrande" id="c-nome"></div><div class="ficha" id="c-ficha"></div></div>
+    <h3>Tarifa e enquadramento</h3>
+    <div class="campos">
+      <label>Data de referência<input type="date" id="c-data"></label>
+      <label>Enquadramento<select id="c-enq" style="min-width:140px"><option value="1">GD I</option><option value="2">GD II</option><option value="3">GD III</option></select></label>
+      <label>% do Fio B pago (Lei 14.300)<input type="text" inputmode="decimal" id="c-pfb"></label>
+      <label>TUSD D (R$/MWh)<input type="text" inputmode="decimal" id="c-tusd"></label>
+      <label>TE E (R$/MWh)<input type="text" inputmode="decimal" id="c-te"></label>
+      <label>Fio B SCEE (R$/MWh)<input type="text" inputmode="decimal" id="c-fb"></label>
+    </div>
+    <h3>Tributos e repasse</h3>
+    <div class="campos">
+      <label>ICMS (%)<input type="text" inputmode="decimal" id="c-icms"></label>
+      <label>PIS (%)<input type="text" inputmode="decimal" id="c-pis"></label>
+      <label>COFINS (%)<input type="text" inputmode="decimal" id="c-cof"></label>
+      <label>ICMS da TE na energia compensada<select id="c-fte" style="min-width:200px"><option value="1">Sim (entra no benefício)</option><option value="0">Não</option></select></label>
+      <label>ICMS da TUSD na energia compensada<select id="c-ftu" style="min-width:200px"><option value="1">Sim (entra no benefício)</option><option value="0">Não</option></select></label>
+      <label>Repasse s (%)<input type="text" inputmode="decimal" id="c-s"></label>
+    </div>
+    <h3>Preço</h3>
+    <div class="campos">
+      <label>Informar<select id="c-modo" style="min-width:200px"><option value="d">Deságio (%) sobre W</option><option value="p">Preço de venda (R$/MWh)</option></select></label>
+      <label><span id="c-preco-rot">Deságio (%)</span><input type="text" inputmode="decimal" id="c-preco"></label>
+    </div>
+    <div class="nota-sim" id="c-fontes"></div>
+  </section>
+  <div class="grid kpis" id="c-kpis" style="margin-top:16px"></div>
+  <section class="card"><h2>Memória de cálculo</h2><div class="tab" id="c-mem"></div><div class="nota-sim" id="c-nota"></div></section>
+  <section class="card">
+    <h2>Simulação de fatura (estimativa)</h2>
+    <div class="campos">
+      <label>Consumo do mês (kWh)<input type="text" inputmode="decimal" id="c-cons" value="1000"></label>
+      <label>Energia compensada (kWh)<input type="text" inputmode="decimal" id="c-comp" value="900"></label>
+      <label>Tipo de ligação<select id="c-lig" style="min-width:200px"><option value="30">Monofásica (30 kWh)</option><option value="50">Bifásica (50 kWh)</option><option value="100" selected>Trifásica (100 kWh)</option></select></label>
+      <label>Bandeira (R$/MWh, sem tributos)<input type="text" inputmode="decimal" id="c-band" value="0"></label>
+      <label>CIP / iluminação pública (R$)<input type="text" inputmode="decimal" id="c-cip" value="0"></label>
+    </div>
+    <div class="sim-res" id="c-fat-res"></div>
+    <div class="tab" id="c-fat-tab"></div>
+    <div class="avisos"><b>Estimativa, não é a fatura real.</b> Regras simplificadas: energia compensada limitada ao consumo menos o custo de disponibilidade;
+      energia não compensada e bandeira pela tarifa cheia com tributos; na energia compensada a unidade paga V - W (tributos não evitados e Fio B residual);
+      CIP fixa; sem multas, juros, ajustes, outros créditos, demanda ou tarifa social. Para GD III, falta o Fio A, TFSEE e P&amp;D/EE.</div>
+  </section>
+</div>
+
+<!-- ============ TABELA THOPEN ============ -->
+<div class="aba" id="aba-thopen">
+  <section class="card" style="margin-top:0">
+    <div class="barra"><h2 style="margin:0" id="t-tit">Tabela Thopen</h2><span class="esp"></span>
+      <span class="grupo"><span class="mut">Enquadramento</span>
+        <button class="btn ativo" data-tenq="1">GD I (planilha)</button><button class="btn" data-tenq="2">GD II</button></span></div>
+    <div class="barra"><input type="search" class="filtro" id="t-busca" placeholder="Filtrar por nome, sigla, UF ou grupo">
+      <label class="mut"><input type="checkbox" id="t-ativas" checked> Só ativas</label>
+      <label class="mut"><input type="checkbox" id="t-plan"> Só as da planilha</label></div>
+    <div class="tab" id="t-tab" style="max-height:680px"></div>
+    <div class="mut" id="t-nota" style="margin-top:6px"></div>
   </section>
 </div>
 
@@ -2456,7 +2796,7 @@ a{color:var(--azul2)}
   // ---- abas
   var feitos = {}, abaAtual = "geral";
   var RENDER = {
-    geral: renderGeral, distribuidora: renderDist, comparador: renderComp, grupoa: renderGA, rankings: function () { renderRank(); renderMatriz(); },
+    geral: renderGeral, distribuidora: renderDist, comparador: renderComp, calculadora: renderCalc, thopen: renderThopen, grupoa: renderGA, rankings: function () { renderRank(); renderMatriz(); },
     regioes: renderRegioes, calendario: renderCal, mudancas: renderLog, metodologia: function () {}
   };
   function mostrar(aba) {
@@ -2552,11 +2892,14 @@ a{color:var(--azul2)}
     }).filter(Boolean), "Sem tarifa do Grupo A para esta distribuidora.");
     if (!m) { $("d-kpis").innerHTML = '<div class="card erro">Sem tarifa B3 para esta distribuidora.</div>'; return; }
     var escTxt = m.esc == null ? "" : f0.format(m.esc * 100) + "% da Lei 14.300";
+    var v1 = txCalcM(m, false), v2 = txCalcM(m, true);
     var kp = [
       ["B3 total atual", num(m.tot), "R$/MWh, vigência " + dataBr(m.ini) + " a " + dataBr(m.fim) + " (" + m.reh + ")"],
       ["TUSD | TE", num(m.tusd) + " | " + num(m.te), "R$/MWh; TUSD = " + pctS(m.tot ? m.tusd / m.tot : null) + " da B3"],
       ["Fio B SCEE", num(m.fb), m.sus ? "valor suspeito, fora das medianas" : "R$/MWh; " + pctS(m.fbt) + " da TUSD; efetivo " + num(m.fbe) + " (" + escTxt + ")"],
       ["Valor do kWh compensado", num(m.vc), m.vc == null ? "sem Fio B SCEE válido" : "R$/MWh (GD II), " + pctS(m.pvc) + " da B3 total"],
+      ["Tarifa B3 com tributos (V)", num(v1 && v1.V), m.tx ? "R$/MWh; ICMS " + pct2(m.tx.i) + " e PIS+COFINS " + pct2(m.tx.pis + m.tx.cof) + " (" + fonteCurta(m.tx.fi) + ")" : "sem alíquotas"],
+      ["Valor compensado com tributos (W)", num(v2 && v2.W), m.tx ? "R$/MWh, GD II; GD I " + num(v1 && v1.W) + "; ICMS na compensada: TE " + sn(m.tx.te) + ", TUSD " + sn(m.tx.tu) + " (" + m.tx.ff + ")" : ""],
       ["Posição B3 total", m.rk ? m.rk[0] + "ª mais cara" : "-", m.rk ? "de " + m.rk[1] + " distribuidoras ativas" : "distribuidora inativa"],
       ["Último reajuste", pct(m.vu), m.ur ? "em " + dataBr(m.ur) + "; de " + num(m.ant) + " para " + num(m.tot) + "; IPCA " + pct(m.iu) + ", real " + pct(m.ru) : "sem reajuste anterior na base"],
       ["Próximo reajuste", m.px ? dataBr(m.px) : "-", m.pp ? "nova homologação publicada: " + num(m.pt) + " (" + pct(m.pv) + ", " + m.preh + ")" : "previsto (dia seguinte ao fim da vigência atual)"]
@@ -2669,6 +3012,12 @@ a{color:var(--azul2)}
       ["TUSD", function (m) { return num(m.tusd); }],
       ["TE", function (m) { return num(m.te); }],
       ["B3 total (TUSD+TE)", function (m) { return "<b>" + num(m.tot) + "</b>"; }],
+      ["ICMS", function (m) { return m.tx ? pct2(m.tx.i) + ' <span class="mut">(' + fonteCurta(m.tx.fi) + ")</span>" : "-"; }],
+      ["PIS+COFINS", function (m) { return m.tx ? pct2(m.tx.pis + m.tx.cof) + ' <span class="mut">(' + fonteCurta(m.tx.fp) + ")</span>" : "-"; }],
+      ["Tarifa com tributos (V)", function (m) { var r = txCalcM(m, false); return "<b>" + num(r && r.V) + "</b>"; }],
+      ["Valor compensado com tributos (W, GD II)", function (m) { var r = txCalcM(m, true); return "<b>" + num(r && r.W) + "</b>"; }],
+      ["Valor compensado com tributos (W, GD I)", function (m) { var r = txCalcM(m, false); return num(r && r.W) +
+        (m.tx ? ' <span class="mut">(ICMS TE ' + sn(m.tx.te) + ", TUSD " + sn(m.tx.tu) + ")</span>" : ""); }],
       ["Posição B3 (1 = mais cara)", function (m) { return posTxt(m.rk); }],
       ["Fio B SCEE", function (m) { return num(m.fb) + (m.sus ? " (suspeito)" : ""); }],
       ["Fio B / TUSD", function (m) { return pctS(m.fbt); }],
@@ -2739,6 +3088,10 @@ a{color:var(--azul2)}
     {k: "vc", n: "Valor do kWh compensado", u: "R$/MWh", f: num, v: function (m) { return m.vc; }, ex: function (m) { return "B3 " + num(m.tot) + " menos Fio B efetivo " + num(m.fbe); }},
     {k: "pvc", n: "Valor compensado / B3 total", u: "%", f: pctS, v: function (m) { return m.pvc; }},
     {k: "tot", n: "B3 total", u: "R$/MWh", f: num, v: function (m) { return m.tot; }, ex: function (m) { return "TUSD " + num(m.tusd) + " + TE " + num(m.te); }},
+    {k: "vt", n: "Tarifa B3 com impostos", u: "R$/MWh", f: num, v: function (m) { var r = txCalcM(m, false); return r ? r.V : null; },
+      ex: function (m) { return "B3 " + num(m.tot) + "; ICMS " + pct2(m.tx.i) + ", PIS+COFINS " + pct2(m.tx.pis + m.tx.cof) + " (" + fonteCurta(m.tx.fi) + ")"; }},
+    {k: "wt", n: "Valor compensado com tributos (W)", u: "R$/MWh", f: num, v: function (m) { var r = txCalcM(m, true); return r ? r.W : null; },
+      ex: function (m) { var r = txCalcM(m, false); return "GD II; GD I " + num(r && r.W) + "; ICMS TE " + sn(m.tx.te) + ", TUSD " + sn(m.tx.tu); }},
     {k: "fb", n: "Fio B SCEE", u: "R$/MWh", f: num, v: function (m) { return m.sus ? null : m.fb; }},
     {k: "fbt", n: "Fio B / TUSD", u: "%", f: pctS, v: function (m) { return m.fbt; }},
     {k: "vu", n: "Variação do último reajuste", u: "%", f: pct, v: function (m) { return m.vu; }, ex: function (m) { return num(m.ant) + " para " + num(m.tot) + " em " + dataBr(m.ur); }},
@@ -3153,6 +3506,210 @@ a{color:var(--azul2)}
       "Valor compensado = energia (TUSD+TE) menos o Fio B efetivo da energia. Histórico por vigência no Excel (aba Grupo A Fio B).";
   }
 
+  // ================= CALCULADORA GD (mesma formula de calc_gd no Python; ver Metodologia)
+  function calcGD(tusd, te, i, pc, fte, ftu, s, fb) {
+    var kpc = 1 / (1 - pc), kf = 1 / ((1 - i) * (1 - pc)), kte = fte ? kf : kpc, ktu = ftu ? kf : kpc;
+    var u = tusd + te, w = (tusd - fb) * ktu + te * kte, y = w - (u - fb), x = s * y;
+    return {kpc: kpc, kf: kf, kte: kte, ktu: ktu, U: u, V: u * kf, fb: fb, W: w, Y: y, X: x, Z: (u - fb) + x, fbr: fb * kf};
+  }
+  function escAno(a) {
+    var e = D.meta.esc, anos = Object.keys(e).map(Number);
+    if (a < Math.min.apply(null, anos)) return 0;
+    return e[String(a)] != null ? e[String(a)] : 1;
+  }
+  // V e W de uma distribuidora com as aliquotas e flags padrao do painel (GD II: Fio B efetivo da vigencia atual)
+  function txCalcM(m, gd2) {
+    var t = m && m.tx; if (!t || m.tusd == null || m.te == null) return null;
+    var fb = 0; if (gd2) { if (m.sus || m.fbe == null) return null; fb = m.fbe; }
+    return calcGD(m.tusd, m.te, t.i, t.pis + t.cof, t.te, t.tu, t.s, fb);
+  }
+  var f4 = new Intl.NumberFormat("pt-BR", {minimumFractionDigits: 4, maximumFractionDigits: 4});
+  var f6 = new Intl.NumberFormat("pt-BR", {minimumFractionDigits: 6, maximumFractionDigits: 6});
+  function pct2(v) { return v == null || !isFinite(v) ? "-" : f2.format(v * 100) + "%"; }
+  function sn(v) { return v ? "sim" : "não"; }
+  function fonteCurta(f) { f = f || ""; return f.indexOf("faturas") === 0 ? "faturas" : (f.indexOf("planilha") === 0 ? "planilha" : (f ? "padrão" : "-")); }
+  function lerN(id) {
+    var s = String($(id).value || "").trim().replace(/\s/g, "").replace("%", ""); if (!s) return null;
+    if (s.indexOf(",") >= 0) s = s.replace(/\./g, "").replace(",", ".");
+    var v = parseFloat(s); return isFinite(v) ? v : null;
+  }
+  function escN(v, casas) {
+    if (v == null || !isFinite(v)) return "";
+    var s = (+v).toFixed(casas); if (casas > 0) s = s.replace(/0+$/, "").replace(/\.$/, "");
+    return s.replace(".", ",");
+  }
+  var calcDist = D.padrao_dist, calcIni = false;
+  seletor("c-busca", "c-lista", false, function (d) { calcDist = d; calcPadroes(false); calcRender(); }, function () { return [calcDist]; });
+  function calcPfb() {
+    var enq = +$("c-enq").value, a = +String($("c-data").value || D.meta.hoje).slice(0, 4);
+    $("c-pfb").value = enq === 1 ? "0" : escN(escAno(a) * 100, 2);
+  }
+  function calcPadroes(tudo) {  // campos da distribuidora; tudo = tambem data, enquadramento e preco
+    var m = M[calcDist] || {}, t = m.tx || {}, P = D.imp.padrao;
+    var v = function (x, p) { return x != null ? x : p; };
+    if (tudo) { $("c-data").value = D.meta.hoje; $("c-enq").value = "2"; $("c-modo").value = "d"; $("c-preco").value = "20";
+      $("c-preco-rot").textContent = "Deságio (%)"; }
+    $("c-tusd").value = escN(m.tusd, 4); $("c-te").value = escN(m.te, 4); $("c-fb").value = escN(m.sus ? null : m.fb, 4);
+    $("c-icms").value = escN(v(t.i, P.i) * 100, 4); $("c-pis").value = escN(v(t.pis, P.pis) * 100, 4);
+    $("c-cof").value = escN(v(t.cof, P.cof) * 100, 4);
+    $("c-fte").value = String(v(t.te, 0)); $("c-ftu").value = String(v(t.tu, 0)); $("c-s").value = escN(v(t.s, P.s) * 100, 2);
+    calcPfb();
+  }
+  var calcUlt = null;
+  function renderCalc() { if (!calcIni) { calcIni = true; calcPadroes(true); } calcRender(); }
+  function calcRender() {
+    var d = calcDist, m = M[d], i = I[d] || {}, t = (m || {}).tx || {};
+    $("c-nome").textContent = rot(d);
+    $("c-ficha").innerHTML = [["UF", i.uf], ["Sigla ANEEL", i.s],
+      ["Vigência atual B3", m ? dataBr(m.ini) + " a " + dataBr(m.fim) + " (" + m.reh + ")" : "sem tarifa B3"],
+      ["Fio B SCEE", m && m.fbi ? "vigência desde " + dataBr(m.fbi) + " (" + m.fbr + ")" + (m.sus ? ", valor suspeito" : "") : "sem Fio B SCEE"]]
+      .filter(function (x) { return x[1]; }).map(function (x) { return "<span>" + esc(x[0]) + ": <b>" + esc(x[1]) + "</b></span>"; }).join("");
+    $("c-fontes").innerHTML = m && m.tx ? "<b>Fontes dos padrões.</b> ICMS: " + esc(t.fi) + ". PIS/COFINS: " + esc(t.fp) + "." +
+      (fonteCurta(t.fi) === "faturas" ? " (" + esc(D.imp.origem) + ")" : "") + " Flags de ICMS e repasse: " + esc(t.ff) + (t.ob ? " (" + esc(t.ob) + ")" : "") +
+      ". Todos os campos são editáveis; use Restaurar padrões para voltar." : "Distribuidora sem tarifa B3 no painel: informe TUSD, TE e alíquotas à mão.";
+    var Dv = lerN("c-tusd"), Ev = lerN("c-te"), fbS = lerN("c-fb") || 0, pfb = (lerN("c-pfb") || 0) / 100, enq = +$("c-enq").value;
+    var ic = (lerN("c-icms") || 0) / 100, pc = ((lerN("c-pis") || 0) + (lerN("c-cof") || 0)) / 100;
+    var fte = +$("c-fte").value, ftu = +$("c-ftu").value, s = (lerN("c-s") || 0) / 100;
+    if (Dv == null || Ev == null || ic >= 1 || pc >= 1 || (1 - ic) * (1 - pc) <= 0) {
+      calcUlt = null;
+      $("c-kpis").innerHTML = '<div class="card erro">Informe TUSD e TE e alíquotas abaixo de 100%.</div>';
+      $("c-mem").innerHTML = ""; $("c-nota").textContent = ""; $("c-fat-res").innerHTML = ""; $("c-fat-tab").innerHTML = ""; return;
+    }
+    var fb = enq === 1 ? 0 : fbS * pfb, r = calcGD(Dv, Ev, ic, pc, fte, ftu, s, fb);
+    var modo = $("c-modo").value, pv = lerN("c-preco"), P = null;
+    if (pv != null) P = modo === "p" ? pv : r.W * (1 - pv / 100);
+    var des = P != null && r.W ? 1 - P / r.W : null, eco = P != null ? r.W - P : null;
+    calcUlt = {r: r, P: P};
+    var gd = ["", "GD I", "GD II", "GD III"][enq];
+    var kp = [
+      ["U: tarifa sem tributos", num(r.U), "D + E, R$/MWh"],
+      ["V: tarifa cheia", num(r.V), "U x k_full; ICMS " + pct2(ic) + ", PIS+COFINS " + pct2(pc)],
+      ["FB_ef: Fio B pago", num(r.fb), enq === 1 ? "GD I: não paga Fio B" : gd + ": " + num(fbS) + " x " + pct2(pfb)],
+      ["W: energia compensada", num(r.W), "com os tributos evitados (" + gd + "); ICMS TE " + sn(fte) + ", TUSD " + sn(ftu)],
+      ["Y: benefício tributário", num(r.Y), "W - (U - FB_ef)"],
+      ["X: VB", num(r.X), "s x Y, s = " + pct2(s)],
+      ["Z: COMP", num(r.Z), "(U - FB_ef) + X"],
+      ["Deságio implícito", pct2(des), P == null ? "informe o preço ou o deságio" : "preço de venda " + num(P) + " R$/MWh"],
+      ["Economia do cliente", num(eco), eco == null ? "" : "R$/MWh compensado (W - preço); " + pct2(eco / r.V) + " da tarifa cheia"],
+      ["Fio B residual com tributos", num(r.fbr), "FB_ef x k_full, pago à distribuidora por MWh compensado"]
+    ];
+    $("c-kpis").innerHTML = kp.map(function (k) {
+      return '<div class="card kpi"><div class="rot">' + esc(k[0]) + '</div><div class="val">' + esc(k[1]) + '</div><div class="sub">' + esc(k[2]) + "</div></div>"; }).join("");
+    var L = [
+      ["k_PC", "1 / (1 - pc)", "1 / (1 - " + f4.format(pc) + ")", f6.format(r.kpc)],
+      ["k_full", "1 / ((1 - i) x (1 - pc))", "1 / ((1 - " + f4.format(ic) + ") x (1 - " + f4.format(pc) + "))", f6.format(r.kf)],
+      ["k_TE", fte ? "k_full (ICMS da TE entra no benefício)" : "k_PC (ICMS da TE não entra)", "", f6.format(r.kte)],
+      ["k_TUSD", ftu ? "k_full (ICMS da TUSD entra no benefício)" : "k_PC (ICMS da TUSD não entra)", "", f6.format(r.ktu)],
+      ["U (tarifa sem tributos)", "D + E", num(Dv) + " + " + num(Ev), num(r.U)],
+      ["V (tarifa cheia)", "U x k_full", num(r.U) + " x " + f6.format(r.kf), num(r.V)],
+      ["FB_ef (Fio B pago)", enq === 1 ? "GD I: 0" : "Fio B SCEE x % Lei 14.300", enq === 1 ? "" : num(fbS) + " x " + pct2(pfb), num(r.fb)],
+      ["W (energia compensada)", "(D - FB_ef) x k_TUSD + E x k_TE", "(" + num(Dv) + " - " + num(r.fb) + ") x " + f6.format(r.ktu) + " + " + num(Ev) + " x " + f6.format(r.kte), num(r.W)],
+      ["Y (benefício tributário)", "W - (U - FB_ef)", num(r.W) + " - (" + num(r.U) + " - " + num(r.fb) + ")", num(r.Y)],
+      ["X (VB)", "s x Y", pct2(s) + " x " + num(r.Y), num(r.X)],
+      ["Z (COMP)", "(U - FB_ef) + X", "(" + num(r.U) + " - " + num(r.fb) + ") + " + num(r.X), num(r.Z)],
+      ["P (preço de venda)", modo === "p" ? "informado" : "W x (1 - deságio)", modo === "p" ? "" : num(r.W) + " x (1 - " + pct2(pv == null ? null : pv / 100) + ")", num(P)],
+      ["Deságio implícito", "1 - P / W", "1 - " + num(P) + " / " + num(r.W), pct2(des)],
+      ["Economia do cliente", "W - P", num(r.W) + " - " + num(P), num(eco)],
+      ["Fio B residual com tributos", "FB_ef x k_full", num(r.fb) + " x " + f6.format(r.kf), num(r.fbr)]
+    ];
+    $("c-mem").innerHTML = tabela(["Passo", "Fórmula", "Cálculo", "Valor"], L.map(function (l) {
+      return "<tr><td>" + esc(l[0]) + "</td><td>" + esc(l[1]) + "</td><td>" + esc(l[2]) + "</td>" + td("<b>" + esc(l[3]) + "</b>") + "</tr>"; }), "", "lado");
+    var ano = +String($("c-data").value || D.meta.hoje).slice(0, 4), notas = ["Valores em R$/MWh. TUSD, TE e Fio B vêm da vigência atual; a data de referência só define o % da Lei 14.300."];
+    if (enq === 3) notas.push("GD III: pela Lei 14.300 (art. 27, par. 1o) paga também 40% do Fio A, TFSEE e P&D/EE, o que não está modelado; W e Z ficam superestimados.");
+    if (enq !== 1 && ano > 2028) notas.push("A partir de 2029 a regra é definida pela ANEEL e não está modelada; usado 100% do Fio B.");
+    if (enq !== 1 && !fbS) notas.push("Sem Fio B SCEE válido: FB_ef = 0.");
+    $("c-nota").textContent = notas.join(" ");
+    calcFatura(r, P);
+  }
+  function calcFatura(r, P) {
+    var C = Math.max(0, lerN("c-cons") || 0), Ec = Math.max(0, lerN("c-comp") || 0), mn = +$("c-lig").value;
+    var band = lerN("c-band") || 0, cip = lerN("c-cip") || 0;
+    var fat = Math.max(C, mn), Ece = Math.min(Ec, Math.max(C - mn, 0)), liq = C - Ece;
+    var eSem = fat * r.V / 1000, bSem = C * band * r.kf / 1000, sem = eSem + bSem + cip;
+    var cred = Ece * r.W / 1000, bCom = liq * band * r.kf / 1000, dist = eSem - cred + bCom + cip;
+    var ger = P != null ? Ece * P / 1000 : 0, tot = dist + ger, eco = sem - tot;
+    function brl(v) { return v == null ? "-" : "R$ " + f2.format(v); }
+    $("c-fat-res").innerHTML = [["Fatura sem GD", brl(sem), f0.format(fat) + " kWh x tarifa cheia + bandeira + CIP"],
+      ["Fatura com GD (distribuidora)", brl(dist), f0.format(Ece) + " kWh compensados" + (Ece < Ec ? " (limitado a consumo menos " + mn + " kWh)" : "")],
+      ["Pagamento ao gerador", brl(ger), P == null ? "sem preço informado" : f0.format(Ece) + " kWh x " + num(P) + " R$/MWh"],
+      ["Economia estimada", brl(eco), sem ? pct2(eco / sem) + " da fatura sem GD" : ""]].map(function (k, j) {
+      return '<div class="card kpi' + (j === 3 && eco > 0 ? " melhor" : "") + '"><div class="rot">' + esc(k[0]) + '</div><div class="val">' + esc(k[1]) + '</div><div class="sub">' + esc(k[2]) + "</div></div>"; }).join("");
+    $("c-fat-tab").innerHTML = tabela(["Item", "Sem GD", "Com GD"], [
+      ["Energia faturada (" + f0.format(fat) + " kWh x V)", eSem, eSem], ["Crédito da energia compensada (" + f0.format(Ece) + " kWh x W)", 0, -cred],
+      ["Bandeira com tributos", bSem, bCom], ["CIP", cip, cip], ["<b>Total da fatura</b>", sem, dist],
+      ["Pagamento ao gerador", 0, ger], ["<b>Custo total</b>", sem, tot]].map(function (l) {
+      return "<tr><td>" + l[0] + "</td>" + td(brl(l[1])) + td(brl(l[2])) + "</tr>"; }), "", "lado");
+  }
+  ["c-tusd", "c-te", "c-fb", "c-pfb", "c-icms", "c-pis", "c-cof", "c-s", "c-preco", "c-cons", "c-comp", "c-band", "c-cip"].forEach(function (id) {
+    $(id).addEventListener("input", calcRender); });
+  ["c-fte", "c-ftu", "c-lig"].forEach(function (id) { $(id).addEventListener("change", calcRender); });
+  ["c-data", "c-enq"].forEach(function (id) { $(id).addEventListener("change", function () { calcPfb(); calcRender(); }); });
+  $("c-modo").addEventListener("change", function () {  // converte o valor para o outro modo
+    var p = $("c-modo").value === "p", v = lerN("c-preco");
+    if (calcUlt && v != null && calcUlt.r.W) $("c-preco").value = p ? escN(calcUlt.r.W * (1 - v / 100), 2) : escN((1 - v / calcUlt.r.W) * 100, 2);
+    $("c-preco-rot").textContent = p ? "Preço de venda (R$/MWh)" : "Deságio (%)";
+    calcRender(); });
+  $("c-reset").addEventListener("click", function () { calcPadroes(true); calcRender(); });
+
+  // ================= TABELA THOPEN (replica a planilha Tarifas.xlsx com a tarifa ANEEL vigente)
+  var tEnq = 1, tOrd = {k: 0, asc: true};
+  var TCOLS = [
+    ["Distribuidora", function (x) { return x.d; }, null],
+    ["UF", function (x) { return (I[x.d] || {}).uf || ""; }, null],
+    ["Vigência", function (x) { return x.m.ini; }, dataBr],
+    ["D (TUSD)", function (x) { return x.m.tusd; }, num], ["E (TE)", function (x) { return x.m.te; }, num],
+    ["ICMS", function (x) { return x.m.tx.i; }, pct2], ["PIS+COFINS", function (x) { return x.m.tx.pis + x.m.tx.cof; }, pct2],
+    ["ICMS na compensada (TE/TUSD)", function (x) { return x.m.tx.te * 2 + x.m.tx.tu; }, function (v, x) { return sn(x.m.tx.te) + " / " + sn(x.m.tx.tu); }],
+    ["s", function (x) { return x.m.tx.s; }, pct2],
+    ["U", function (x) { return x.r ? x.r.U : null; }, num], ["V", function (x) { return x.r ? x.r.V : null; }, num],
+    ["FB_ef", function (x) { return x.r ? x.r.fb : null; }, num, 2],
+    ["W", function (x) { return x.r ? x.r.W : null; }, num], ["Y", function (x) { return x.r ? x.r.Y : null; }, num],
+    ["X", function (x) { return x.r ? x.r.X : null; }, num], ["Z", function (x) { return x.r ? x.r.Z : null; }, num],
+    ["TUSD+TE na planilha", function (x) { return x.rt; }, num],
+    ["Diferença (U - planilha)", function (x) { return x.dif; }, function (v, x) { return v == null ? "-" : '<span class="' + cls(v) + '">' + (v > 0 ? "+" : "") + num(v) + " (" + pct(x.rt ? v / x.rt : null) + ")</span>"; }]
+  ];
+  function renderThopen() {
+    var q = $("t-busca").value.trim(), so = $("t-ativas").checked, sp = $("t-plan").checked, gd2 = tEnq === 2;
+    var cols = TCOLS.filter(function (c) { return !c[3] || c[3] === tEnq; });
+    var itens = D.lista.filter(function (d) { return M[d] && M[d].tx && (!q || casa(d, q)) && (!so || I[d].a) && (!sp || D.ref[d]); })
+      .map(function (d) { var m = M[d], ref = D.ref[d], rt = ref && ref[1] != null && ref[2] != null ? ref[1] + ref[2] : null;
+        return {d: d, m: m, r: txCalcM(m, gd2), rt: rt, dif: rt != null && m.tot != null ? m.tot - rt : null}; });
+    var c = cols[tOrd.k] || cols[0];
+    itens.sort(function (x, y) {
+      var a = c[1](x), b = c[1](y), r;
+      if (a == null && b == null) r = 0; else if (a == null) return 1; else if (b == null) return -1;
+      else r = typeof a === "string" ? a.localeCompare(b, "pt-BR") : a - b;
+      return tOrd.asc ? r : -r; });
+    $("t-tit").textContent = "Tabela Thopen: " + (gd2 ? "GD II (FB_ef = Fio B efetivo da vigência atual)" : "GD I, como na planilha (FB_ef = 0)") + ", " + itens.length + " distribuidoras";
+    var seta = function (j) { return tOrd.k === j ? (tOrd.asc ? " ▲" : " ▼") : ""; };
+    var h = "<table><thead><tr>" + cols.map(function (c, j) { return '<th class="ord' + (j ? "" : " nome") + '" data-tk="' + j + '">' + esc(c[0]) + seta(j) + "</th>"; }).join("") + "</tr></thead><tbody>";
+    h += itens.map(function (x) {
+      return '<tr class="' + (ehPort(x.d) ? "port" : "") + '">' + cols.map(function (c, j) {
+        var v = c[1](x);
+        if (!j) return '<td class="nome"><a href="#calculadora" data-calc="' + esc(x.d) + '" title="Abrir na Calculadora">' + esc(rot(x.d)) + "</a>" + (I[x.d].a ? "" : ' <span class="mut">(inativa)</span>') + "</td>";
+        if (j === 1) return "<td>" + esc(v) + "</td>";
+        var txt = c[2] ? c[2](v, x) : esc(v);
+        return td(c[0] === "V" || c[0] === "W" ? "<b>" + txt + "</b>" : txt);
+      }).join("") + "</tr>"; }).join("");
+    $("t-tab").innerHTML = itens.length ? h + "</tbody></table>" : '<div class="erro">Nenhuma distribuidora para o filtro.</div>';
+    $("t-nota").textContent = "R$/MWh. Alíquotas, flags de ICMS e repasse s: padrões do painel (fonte de cada um na Calculadora e no Excel, aba Impostos). " +
+      "TUSD+TE na planilha: referência fixa da planilha Tarifas.xlsx do usuário (" + Object.keys(D.ref).length + " distribuidoras); diferença = U (ANEEL vigente) menos a planilha. " +
+      (gd2 ? "GD II: sem Fio B SCEE válido, W, Y, X e Z ficam em branco. " : "") + "Clique no nome para abrir na Calculadora. Mesma tabela no Excel (aba Calculadora (tabela)).";
+  }
+  $("t-tab").addEventListener("click", function (e) {
+    var a = e.target.closest("[data-calc]");
+    if (a) { e.preventDefault(); calcDist = a.getAttribute("data-calc"); if (calcIni) calcPadroes(false); feitos.calculadora = false; mostrar("calculadora"); return; }
+    var th = e.target.closest("th[data-tk]"); if (!th) return;
+    var k = parseInt(th.getAttribute("data-tk"), 10);
+    if (tOrd.k === k) tOrd.asc = !tOrd.asc; else { tOrd.k = k; tOrd.asc = k < 2; }
+    renderThopen(); });
+  $("t-busca").addEventListener("input", renderThopen);
+  $("t-ativas").addEventListener("change", renderThopen);
+  $("t-plan").addEventListener("change", renderThopen);
+  document.querySelectorAll("[data-tenq]").forEach(function (b) { b.addEventListener("click", function () {
+    tEnq = +b.getAttribute("data-tenq"); tOrd.k = Math.min(tOrd.k, 9);
+    document.querySelectorAll("[data-tenq]").forEach(function (x) { x.classList.toggle("ativo", x === b); }); renderThopen(); }); });
+
   var h = (location.hash || "").replace("#", "");
   mostrar(RENDER[h] ? h : "geral");
 })();
@@ -3165,6 +3722,8 @@ a{color:var(--azul2)}
 # ---------------------------------------------------------------------------- main
 
 def gerar_paineis(base: Path, visoes: dict, log_path: Path, cfg: dict, agora: datetime, estado: dict) -> None:
+    visoes["imp"] = tabela_impostos(visoes, base)
+    visoes["imp_faturas"] = impostos_faturas_excel(base)
     painel = base / f"{PAINEL}.xlsx"
     gerar_painel(painel, visoes, log_path, cfg, agora, estado)
     print(f"Painel gerado: {painel}")
@@ -3413,7 +3972,8 @@ def main() -> int:
                              list(calendario(met, agora.date()).index),
                              ipca.get("baixado_em", "")[:7] if ipca else "",
                              sorted(zip(gm["distribuidora"], gm["subgrupo"], gm["modalidade"], gm["inicio"],
-                                        gm["fb_inicio"].fillna(""))) if len(gm) else []],
+                                        gm["fb_inicio"].fillna(""))) if len(gm) else [],
+                             hash_impostos(base)],
                             ensure_ascii=False)
 
     # Estado com data (sem hora): no maximo 1 commit por dia como sinal de vida, o que
