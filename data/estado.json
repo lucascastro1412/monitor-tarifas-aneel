@@ -24,6 +24,12 @@
   "linhas_fiob_por_ano_vigencia": {
     "2026": 396
   },
+  "linhas_removidas_fonte": {
+    "fiob_b3": 0,
+    "fiob_grupo_a": 0,
+    "tarifa_b3": 220,
+    "tarifa_grupo_a": 1482
+  },
   "parquet": {
     "fiob_2024": {
       "baixado_em": "2026-11-24",
