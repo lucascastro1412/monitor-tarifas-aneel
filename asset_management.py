@@ -501,3 +501,61 @@ def projecao_arrendamento_asset(p: Premissas, anos: int, tar: dict, pct_fb: list
                     "desconto_cliente": r["desconto"] * consumo / 1000.0,
                     **{k: m[k] * 12 for k in ("gerador", "margem_painel", "thopen", "receita")}})
     return out
+
+
+# ---------------------------------------------------------------- versao comercial simples (proposta_asset.html)
+# Uma proposta so: fee Thopen = % x energia faturada com desconto + custo da operacao (R$/UC ativa/mes), senior na cascata.
+# A pagina completa (proposta_asset_completa.html) continua usando as funcoes acima.
+
+def cascata_simples(credito: float, desconto: float, fatura_dist: float, inadimplencia: float, fee_pct: float,
+                    custo_operacao: float, canal: float = 0.0) -> dict:
+    """Cascata por cliente ativo por mes (R$). credito = consumo x tarifa compensavel; fracoes em decimal.
+    energia faturada com desconto F = credito x (1 - desconto); arrecadacao = (F + fatura) x (1 - inadimplencia);
+    fee = % x F + custo da operacao; gerador = arrecadacao - fatura - canal - fee (o Gerador absorve a inadimplencia
+    e a fatura da distribuidora nao paga; o fee nao varia com a inadimplencia)."""
+    f = credito * (1.0 - desconto)
+    bruto = f + fatura_dist
+    arr = bruto * (1.0 - inadimplencia)
+    fee_pct_v = fee_pct * f
+    fee = fee_pct_v + custo_operacao
+    return {"credito": credito, "desconto": credito - f, "faturada": f, "fatura_dist": fatura_dist, "bruto": bruto,
+            "perda": bruto * inadimplencia, "arrecadacao": arr, "vazamento": fatura_dist * inadimplencia, "canal": canal,
+            "fee_pct": fee_pct_v, "custo_operacao": custo_operacao, "fee": fee,
+            "gerador": arr - fatura_dist - canal - fee, "inadimplencia": inadimplencia}
+
+
+def kwh_simples(c: dict, consumo: float) -> dict:
+    """Valores por kWh = valores por cliente/mes / consumo medio (kWh/cliente/mes)."""
+    return {k: v / consumo for k, v in c.items() if k != "inadimplencia" and isinstance(v, (int, float))}
+
+
+def projecao_simples(credito: float, desconto: float, fatura_dist: float, inadimplencia: float, fee_pct: float,
+                     custo_operacao: float, canal: float = 0.0, anos: int = 5, reaj_tarifa: float = 0.0,
+                     reaj_custo: float = 0.0, fatores_fio_b: Optional[list[float]] = None,
+                     clientes: Optional[int] = None, ocupacao: float = 1.0, degradacao: float = 0.0,
+                     taxa: Optional[float] = None) -> dict:
+    """Projecao ano a ano (t = 0 e o ano de inicio). Credito x fator do Fio B do ano (credito_kwh_ano / base; GD I = 1)
+    x (1 + reajuste da tarifa)^t; fatura da distribuidora pelo reajuste da tarifa; custo da operacao e canal pelo reajuste
+    do custo; clientes = piso(clientes x (1 - degradacao)^t); ativos = clientes x ocupacao (sem capacidade: 1).
+    Valores anuais = por cliente/mes x ativos x 12. VPL com fluxos no fim de cada ano (vpl)."""
+    out = []
+    for t in range(int(anos)):
+        ft, fc = (1.0 + reaj_tarifa) ** t, (1.0 + reaj_custo) ** t
+        ff = fatores_fio_b[t] if fatores_fio_b else 1.0
+        c = cascata_simples(credito * ff * ft, desconto, fatura_dist * ft, inadimplencia, fee_pct, custo_operacao * fc,
+                            canal * fc)
+        n = math.floor(clientes * (1.0 - degradacao) ** t + 1e-9) if clientes else None
+        ativos = n * ocupacao if n else 1.0
+        out.append({"t": t, "clientes": n, "ativos": ativos, "por_cliente": c,
+                    "fee": c["fee"] * ativos * 12, "gerador": c["gerador"] * ativos * 12})
+    fee_fl, ger_fl = [x["fee"] for x in out], [x["gerador"] for x in out]
+    return {"anos": out, "total_fee": sum(fee_fl), "total_gerador": sum(ger_fl),
+            "vpl_fee": vpl(fee_fl, taxa) if taxa is not None else None,
+            "vpl_gerador": vpl(ger_fl, taxa) if taxa is not None else None}
+
+
+def sensibilidade_inadimplencia(credito: float, desconto: float, fatura_dist: float, fee_pct: float,
+                                custo_operacao: float, canal: float = 0.0,
+                                inads: tuple = (0.0, 0.05, 0.10, 0.15, 0.20, 0.25)) -> list[dict]:
+    """Gerador e fee por cliente/mes de 0% a 25% de inadimplencia (passo 5 p.p.)."""
+    return [cascata_simples(credito, desconto, fatura_dist, i, fee_pct, custo_operacao, canal) for i in inads]

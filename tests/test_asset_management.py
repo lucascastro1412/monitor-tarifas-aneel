@@ -1,4 +1,5 @@
-"""Montador de proposta Asset Management: conta (asset_management.py) e travas da pagina proposta_asset.html.
+"""Montador de proposta Asset Management: conta (asset_management.py) e travas das paginas proposta_asset.html
+(versao comercial simples) e proposta_asset_completa.html (analise detalhada).
 
 Valores de teste inventados e redondos (credito 300, desconto 15%, ...), conferidos analiticamente.
 Uso:  py -m pytest -q tests/test_asset_management.py
@@ -16,7 +17,8 @@ sys.path.insert(0, str(RAIZ))
 
 import asset_management as am  # noqa: E402
 
-PAGINA = RAIZ / "proposta_asset.html"
+PAGINA = RAIZ / "proposta_asset_completa.html"  # versao completa (analise detalhada)
+PAGINA_SIMPLES = RAIZ / "proposta_asset.html"  # versao comercial simples
 WF = RAIZ / ".github" / "workflows" / "monitor-tarifas-aneel.yml"
 
 
@@ -157,7 +159,8 @@ def test_pagina_trava_do_pdf_ao_gerador():
 
 
 def test_pagina_sem_numeros_reais():
-    h = _html() + (RAIZ / "asset_management.py").read_text(encoding="utf-8") + Path(__file__).read_text(encoding="utf-8")
+    h = _html() + PAGINA_SIMPLES.read_text(encoding="utf-8") + (RAIZ / "asset_management.py").read_text(encoding="utf-8") \
+        + Path(__file__).read_text(encoding="utf-8")
     proibidos = [("334", "09"), ("279", "40"), ("70", "51"), ("27", "07"), ("233", "86"), ("43", "23"), ("314", "9"),
                  ("176", "5"), ("186", "5")]
     for a, b in proibidos:
@@ -169,6 +172,8 @@ def test_workflow_publica_a_pagina():
     w = WF.read_text(encoding="utf-8")
     assert "proposta_asset.html" in w
     assert "cp proposta_asset.html site/proposta_asset.html" in w
+    assert "cp proposta_asset_completa.html site/proposta_asset_completa.html" in w
+    assert '- "proposta_asset_completa.html"' in w
 
 
 # ---------------- capacidade da usina
@@ -777,3 +782,124 @@ def test_arrendamento_igual_ao_asset_cliente_paga_o_mesmo_com_bruto_diferente():
         assert x["mwh"]["bruto"] != pytest.approx(x["mwh"]["W_I"] - x["mwh"]["custo_fb"])
         assert x["mes"]["energia_cliente"] / x["ativos"] == pytest.approx(pt.faturada)
         assert x["desconto_cliente"] == pytest.approx(pt.credito - pt.faturada)
+
+
+# ---------------- versao comercial simples (proposta_asset.html): fee % + custo da operacao
+
+def _cs(**kw):
+    base = dict(credito=300.0, desconto=0.15, fatura_dist=50.0, inadimplencia=0.10, fee_pct=0.05, custo_operacao=10.0,
+                canal=4.0)
+    base.update(kw)
+    return am.cascata_simples(**base)
+
+
+def test_simples_cascata_fecha():
+    for i in (0.0, 0.10, 0.25):
+        c = _cs(inadimplencia=i)
+        assert c["arrecadacao"] == pytest.approx(c["fatura_dist"] + c["canal"] + c["fee"] + c["gerador"])
+    c = _cs()
+    assert c["faturada"] == pytest.approx(255.0)
+    assert c["arrecadacao"] == pytest.approx(305.0 * 0.9)
+    assert c["gerador"] == pytest.approx(274.5 - 50 - 4 - 22.75)
+
+
+def test_simples_fee_pct_mais_custo_e_independe_da_inadimplencia():
+    c = _cs()
+    assert c["fee_pct"] == pytest.approx(0.05 * 255.0)
+    assert c["fee"] == pytest.approx(0.05 * 255.0 + 10.0)
+    assert _cs(inadimplencia=0.25)["fee"] == pytest.approx(c["fee"])
+    assert _cs(inadimplencia=0.25)["gerador"] < c["gerador"]
+
+
+def test_simples_por_kwh_igual_por_cliente_sobre_consumo():
+    c, cons = _cs(), 400.0
+    k = am.kwh_simples(c, cons)
+    for chave in ("credito", "faturada", "fee", "fee_pct", "custo_operacao", "gerador", "arrecadacao"):
+        assert k[chave] == pytest.approx(c[chave] / cons)
+
+
+def test_simples_projecao_ano0_igual_estatico_e_totais():
+    c = _cs()
+    pr = am.projecao_simples(300.0, 0.15, 50.0, 0.10, 0.05, 10.0, canal=4.0, anos=4, reaj_tarifa=0.05, reaj_custo=0.04,
+                             clientes=1000, ocupacao=0.8, degradacao=0.01, taxa=0.10)
+    a0 = pr["anos"][0]
+    assert a0["por_cliente"]["gerador"] == pytest.approx(c["gerador"])
+    assert a0["por_cliente"]["fee"] == pytest.approx(c["fee"])
+    assert a0["ativos"] == pytest.approx(800.0)
+    assert a0["gerador"] == pytest.approx(c["gerador"] * 800 * 12)
+    assert pr["anos"][1]["clientes"] == 990
+    assert pr["anos"][1]["por_cliente"]["custo_operacao"] == pytest.approx(10.0 * 1.04)
+    assert pr["anos"][1]["por_cliente"]["credito"] == pytest.approx(300.0 * 1.05)
+    assert pr["total_gerador"] == pytest.approx(sum(x["gerador"] for x in pr["anos"]))
+    assert pr["vpl_fee"] == pytest.approx(am.vpl([x["fee"] for x in pr["anos"]], 0.10))
+    sem = am.projecao_simples(300.0, 0.15, 50.0, 0.10, 0.05, 10.0, anos=2)
+    assert sem["anos"][0]["ativos"] == 1.0 and sem["vpl_fee"] is None
+
+
+def test_simples_fio_b_reduz_credito_gd2_e_nao_gd1():
+    base, w = 0.90, [0.80, 0.77, 0.74]           # valor compensado GD II inventado (R$/kWh), cai com o Fio B
+    ff2 = [am.credito_kwh_ano(base, w[0], x) / base for x in w]
+    ff1 = [am.credito_kwh_ano(base, 0.80, 0.80) / base for _ in w]   # GD I: valor compensado constante
+    p2 = am.projecao_simples(300.0, 0.15, 50.0, 0.10, 0.05, 10.0, anos=3, fatores_fio_b=ff2)
+    p1 = am.projecao_simples(300.0, 0.15, 50.0, 0.10, 0.05, 10.0, anos=3, fatores_fio_b=ff1)
+    assert p2["anos"][2]["por_cliente"]["credito"] < p1["anos"][2]["por_cliente"]["credito"]
+    assert p2["anos"][2]["gerador"] < p1["anos"][2]["gerador"]
+    assert p1["anos"][2]["por_cliente"]["credito"] == pytest.approx(300.0)
+
+
+def test_simples_sensibilidade_inadimplencia():
+    s = am.sensibilidade_inadimplencia(300.0, 0.15, 50.0, 0.05, 10.0)
+    assert [round(x["inadimplencia"], 2) for x in s] == [0.0, 0.05, 0.10, 0.15, 0.20, 0.25]
+    assert len({round(x["fee"], 6) for x in s}) == 1
+    assert all(a["gerador"] > b["gerador"] for a, b in zip(s, s[1:]))
+
+
+def _simples() -> str:
+    return PAGINA_SIMPLES.read_text(encoding="utf-8")
+
+
+def test_simples_pagina_sem_travessao_e_inputs_vazios():
+    h = _simples()
+    assert "—" not in h and " – " not in h
+    inputs = re.findall(r"<input\b[^>]*>", h)
+    assert len(inputs) >= 20
+    for tag in inputs:
+        if re.search(r'type="(checkbox|file)"', tag):
+            continue
+        assert 'value=""' in tag, tag
+        assert not re.search(r'value="[^"]+"', tag), tag
+
+
+def test_simples_pagina_so_uma_proposta():
+    h = re.sub(r"var GER_PROIBIDO = /.+?/i;", "", _simples()).lower()   # a trava do PDF lista os termos de proposito
+    for termo in ("success fee", "proposta b", "take rate", "arrendamento", "break-even", "g&a"):
+        assert termo not in h, termo
+
+
+def test_simples_pagina_blocos_exportacao_e_link_completa():
+    h = _simples()
+    for t in ('id="f-fee"', 'id="f-custo"', "Custo da operação (R$/UC/mês)", "Tarifas e valores por kWh", 'id="t-cascata"',
+              'id="t-proj"', 'id="t-sens"', "Cláusulas essenciais", "PDF proposta ao gerador", "Exportar Excel", "xlsx@0.18.5",
+              '<a href="proposta_asset_completa.html">versão completa (análise detalhada)</a>', 'fetch("tarifas_asset.json"',
+              "versao: 6"):
+        assert t in h, t
+    for aba in ('"Premissas"', '"Valores por kWh"', '"Cascata"', '"Projeção"', '"Sensibilidade"', '"Cláusulas"'):
+        assert "nome: " + aba in h, aba
+    rx = re.compile(re.search(r"var GER_PROIBIDO = /(.+?)/i;", h).group(1), re.I)
+    for termo in ("margem", "G&A", "break-even", "resultado da Thopen"):
+        assert rx.search(termo), termo
+    assert not rx.search("custo da operação") and not rx.search("Fee Thopen total")
+
+
+def test_simples_cenarios_antigos_mapeados():
+    h = _simples()
+    m = re.search(r"var MAPA_ANTIGO = \{(.*?)\};", h)
+    assert m and '"f-pa": "f-fee"' in m.group(1) and '"f-op": "f-custo"' in m.group(1)
+    assert "if (v >= 6) return {campos: o, antigo: false};" in h       # versao 6 carrega direto; 1 a 5 pelo mapa
+    campos = re.search(r"var CAMPOS = \[(.*?)\];", h, re.S).group(1)
+    for k in ("f-fee", "f-custo", "f-tarifa", "f-consumo", "f-desc", "f-df", "f-inad", "f-canal", "f-ocup", "f-prazo", "f-sla1", "f-sla2"):
+        assert '"' + k + '"' in campos, k
+    for velho in ('"f-pb"', '"f-sig"', '"f-fa"', '"f-ga"', '"f-tr"'):
+        assert velho not in campos, velho
+    # SLA aceita texto ("5 dias"): extrai o numero
+    assert "function dias(id)" in h and 'dias("f-sla1")' in h and 'dias("f-sla2")' in h
