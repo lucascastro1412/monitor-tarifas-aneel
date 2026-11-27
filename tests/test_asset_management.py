@@ -903,3 +903,62 @@ def test_simples_cenarios_antigos_mapeados():
         assert velho not in campos, velho
     # SLA aceita texto ("5 dias"): extrai o numero
     assert "function dias(id)" in h and 'dias("f-sla1")' in h and 'dias("f-sla2")' in h
+
+
+# ---------------- comissao de parceiro (% da energia faturada com desconto) e remocao da economia vs tarifa cheia
+
+@pytest.mark.parametrize("pagador", ["gerador", "thopen"])
+def test_simples_comissao_cascata_fecha(pagador):
+    for i in (0.0, 0.10, 0.25):
+        c = _cs(inadimplencia=i, comissao_pct=0.02, comissao_pagador=pagador)
+        assert c["comissao"] == pytest.approx(0.02 * c["faturada"])
+        assert c["arrecadacao"] == pytest.approx(c["fatura_dist"] + c["canal"] + c["fee_liquido"] + c["comissao"] + c["gerador"])
+        assert c["fee"] == pytest.approx(_cs(inadimplencia=i)["fee"])            # fee cobrado na cascata nao muda
+
+
+def test_simples_comissao_quem_paga():
+    sem, ger, tho = _cs(), _cs(comissao_pct=0.02), _cs(comissao_pct=0.02, comissao_pagador="thopen")
+    assert ger["comissao"] == pytest.approx(0.02 * 255.0)
+    assert ger["gerador"] == pytest.approx(sem["gerador"] - 0.02 * 255.0)
+    assert ger["fee_liquido"] == pytest.approx(ger["fee"])
+    assert tho["gerador"] == pytest.approx(sem["gerador"])
+    assert tho["fee_liquido"] == pytest.approx(tho["fee"] - 0.02 * 255.0)
+    assert sem["comissao"] == 0 and sem["fee_liquido"] == pytest.approx(sem["fee"])
+    with pytest.raises(ValueError):
+        _cs(comissao_pct=0.02, comissao_pagador="outro")
+    k = am.kwh_simples(ger, 400.0)
+    assert k["comissao"] == pytest.approx(ger["comissao"] / 400.0)
+
+
+@pytest.mark.parametrize("pagador", ["gerador", "thopen"])
+def test_simples_comissao_na_projecao_e_sensibilidade(pagador):
+    ff = [1.0, 0.97, 0.94]
+    pr = am.projecao_simples(300.0, 0.15, 50.0, 0.10, 0.05, 10.0, canal=4.0, anos=3, reaj_tarifa=0.05, fatores_fio_b=ff,
+                             clientes=1000, ocupacao=0.8, taxa=0.10, comissao_pct=0.02, comissao_pagador=pagador)
+    for t, a in enumerate(pr["anos"]):
+        c = a["por_cliente"]
+        assert c["comissao"] == pytest.approx(0.02 * 300.0 * ff[t] * 1.05 ** t * 0.85)   # segue F: reajuste e Fio B
+        assert a["comissao"] == pytest.approx(c["comissao"] * a["ativos"] * 12)
+    assert pr["total_comissao"] == pytest.approx(sum(a["comissao"] for a in pr["anos"]))
+    assert pr["vpl_comissao"] == pytest.approx(am.vpl([a["comissao"] for a in pr["anos"]], 0.10))
+    assert pr["total_fee_liquido"] == pytest.approx(pr["total_fee"] - (pr["total_comissao"] if pagador == "thopen" else 0))
+    s = am.sensibilidade_inadimplencia(300.0, 0.15, 50.0, 0.05, 10.0, comissao_pct=0.02, comissao_pagador=pagador)
+    assert len({round(x["comissao"], 6) for x in s}) == 1
+    assert all(a["gerador"] > b["gerador"] for a, b in zip(s, s[1:]))
+
+
+def test_simples_pagina_comissao_e_sem_economia_vs_tarifa_cheia():
+    h = _simples()
+    assert "Economia do cliente vs tarifa cheia" not in h
+    assert "Economia do cliente (crédito menos energia com desconto)" in h
+    assert "—" not in h and "–" not in h
+    for t in ('id="f-com"', 'id="f-parceiro"', 'id="f-compag"', "Comissão do parceiro (% da energia faturada com desconto)",
+              "Nome do parceiro", "Quem paga a comissão", '<option value="g" selected>Gerador (sai do repasse)</option>',
+              '<option value="t">Thopen (sai do fee)</option>', "Fee líquido da Thopen", "Comissão de parceiro"):
+        assert t in h, t
+    campos = re.search(r"var CAMPOS = \[(.*?)\];", h, re.S).group(1)
+    for k in ('"f-com"', '"f-parceiro"', '"f-compag"'):
+        assert k in campos, k
+    assert '"f-compag": "g"' in re.search(r"var SEL = \{(.*?)\};", h).group(1)
+    rx = re.compile(re.search(r"var GER_PROIBIDO = /(.+?)/i;", h).group(1), re.I)
+    assert not rx.search("Fee líquido da Thopen") and not rx.search("Comissão de parceiro")

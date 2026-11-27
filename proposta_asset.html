@@ -128,6 +128,11 @@ td.neg{color:var(--vermelho);font-weight:600;background:#FDECEA}
       <label>Fee (% da energia faturada com desconto)<input type="text" id="f-fee" inputmode="decimal" value=""></label>
       <label>Custo da operação (R$/UC/mês)<input type="text" id="f-custo" inputmode="decimal" value=""></label>
     </div><p class="ajuda">Fee total = % x energia faturada com desconto + custo da operação por UC ativa.</p></fieldset>
+    <fieldset><legend>Comissão de parceiro (opcional)</legend><div class="campos">
+      <label>Comissão do parceiro (% da energia faturada com desconto)<input type="text" id="f-com" inputmode="decimal" value=""><span class="ajuda">vazio = 0</span></label>
+      <label>Nome do parceiro<input type="text" id="f-parceiro" value="" autocomplete="off"><span class="ajuda">opcional</span></label>
+      <label>Quem paga a comissão<select id="f-compag" class="largo"><option value="g" selected>Gerador (sai do repasse)</option><option value="t">Thopen (sai do fee)</option></select></label>
+    </div><p class="ajuda">Comissão = % x energia faturada com desconto, paga pela ACER na cascata. Paga pelo Gerador: sai do repasse. Paga pela Thopen: sai do fee (fee líquido da Thopen = fee total - comissão) e o Gerador não muda.</p></fieldset>
     <fieldset><legend>Prazo e reajustes</legend><div class="campos">
       <label>Prazo do contrato (anos)<input type="text" id="f-prazo" inputmode="numeric" value=""></label>
       <label>Reajuste anual da tarifa (% a.a.)<input type="text" id="f-reaj" inputmode="decimal" value=""><span class="ajuda" id="h-reaj">vazio = IPCA 12 meses</span></label>
@@ -144,7 +149,8 @@ td.neg{color:var(--vermelho);font-weight:600;background:#FDECEA}
   <div id="erros" class="erro" style="margin-top:12px"></div>
   <div class="nota">Conta por cliente ativo por mês: crédito = consumo x tarifa compensável; energia faturada com desconto = crédito x (1 - desconto);
     arrecadação = (energia faturada com desconto + fatura da distribuidora) x (1 - inadimplência); fee Thopen = % x energia faturada com desconto + custo da operação;
-    Gerador = arrecadação - fatura da distribuidora - recorrência do canal - fee Thopen.
+    Gerador = arrecadação - fatura da distribuidora - recorrência do canal - fee Thopen - comissão de parceiro (quando paga pelo Gerador).
+    Comissão de parceiro = % x energia faturada com desconto; quando paga pela Thopen, a ACER a paga a partir do fee e o fee líquido da Thopen = fee total - comissão.
     O fee é sênior na cascata e incide sobre a energia faturada com desconto, então não varia com a inadimplência; inadimplência e fatura da distribuidora não paga ficam com o Gerador.</div>
   <div id="tar-nota" class="aviso" style="display:none"></div>
 </section>
@@ -172,7 +178,7 @@ td.neg{color:var(--vermelho);font-weight:600;background:#FDECEA}
 <section id="s-sens" class="card">
   <h2>5. Sensibilidade à inadimplência</h2>
   <div class="tab"><table id="t-sens"></table></div>
-  <div class="nota">O fee Thopen não muda com a inadimplência (incide sobre a energia faturada com desconto); a variação fica com o Gerador.</div>
+  <div class="nota">O fee Thopen e a comissão de parceiro não mudam com a inadimplência (incidem sobre a energia faturada com desconto); a variação fica com o Gerador.</div>
 </section>
 
 <section id="s-clausulas" class="card">
@@ -212,18 +218,19 @@ td.neg{color:var(--vermelho);font-weight:600;background:#FDECEA}
 
   // ---------------- campos
   var CAMPOS = ["f-usina", "f-data", "f-dist-sel", "f-dist", "f-gd", "f-ano", "f-base", "f-tarifa", "f-pot", "f-unid", "f-prod", "f-ger", "f-pcomp",
-    "f-degr", "f-ocup", "f-consumo", "f-desc", "f-df", "f-inad", "f-canal", "f-fee", "f-custo", "f-prazo", "f-reaj", "f-reajc", "f-taxa",
+    "f-degr", "f-ocup", "f-consumo", "f-desc", "f-df", "f-inad", "f-canal", "f-fee", "f-custo", "f-com", "f-parceiro", "f-compag", "f-prazo", "f-reaj", "f-reajc", "f-taxa",
     "f-descmax", "f-sla1", "f-sla2", "f-regua"];
-  var SEL = {"f-dist-sel": "", "f-gd": "II", "f-base": "c", "f-unid": "kwp"};
+  var SEL = {"f-dist-sel": "", "f-gd": "II", "f-base": "c", "f-unid": "kwp", "f-compag": "g"};
   var ROT = {"f-usina": "Usina / gerador", "f-data": "Data", "f-dist-sel": "Distribuidora (lista do painel)", "f-dist": "Distribuidora (nome)",
     "f-gd": "Modalidade GD", "f-ano": "Ano de início", "f-base": "Base da tarifa compensável", "f-tarifa": "Tarifa compensável (R$/kWh)",
     "f-pot": "Potência", "f-unid": "Unidade da potência", "f-prod": "Produtividade (kWh/kWp/ano)", "f-ger": "Geração média direta (MWh/mês)",
     "f-pcomp": "Geração compensada", "f-degr": "Degradação anual", "f-ocup": "Ocupação", "f-consumo": "Consumo médio (kWh/cliente/mês)",
     "f-desc": "Desconto ao cliente", "f-df": "Fatura da distribuidora repassada", "f-inad": "Inadimplência", "f-canal": "Recorrência do canal",
-    "f-fee": "Fee (% da energia faturada com desconto)", "f-custo": "Custo da operação (R$/UC/mês)", "f-prazo": "Prazo do contrato (anos)",
+    "f-fee": "Fee (% da energia faturada com desconto)", "f-custo": "Custo da operação (R$/UC/mês)",
+    "f-com": "Comissão do parceiro (% da energia faturada com desconto)", "f-parceiro": "Nome do parceiro", "f-compag": "Quem paga a comissão", "f-prazo": "Prazo do contrato (anos)",
     "f-reaj": "Reajuste anual da tarifa", "f-reajc": "Reajuste do custo da operação", "f-taxa": "Taxa para VPL",
     "f-descmax": "Desconto máximo ao cliente", "f-sla1": "SLA: início da cobrança", "f-sla2": "SLA: negativação", "f-regua": "Régua de cobrança"};
-  var PCT = {"f-pcomp": 1, "f-degr": 1, "f-ocup": 1, "f-desc": 1, "f-inad": 1, "f-fee": 1, "f-reaj": 1, "f-reajc": 1, "f-taxa": 1, "f-descmax": 1};
+  var PCT = {"f-pcomp": 1, "f-degr": 1, "f-ocup": 1, "f-desc": 1, "f-inad": 1, "f-fee": 1, "f-com": 1, "f-reaj": 1, "f-reajc": 1, "f-taxa": 1, "f-descmax": 1};
   // cenarios antigos (versao 1 a 5, pagina completa): fee % da proposta A e custo de operacao viram fee % e custo da operacao;
   // os demais termos daquela versao sao ignorados
   var MAPA_ANTIGO = {"f-pa": "f-fee", "f-op": "f-custo"};
@@ -352,20 +359,25 @@ td.neg{color:var(--vermelho);font-weight:600;background:#FDECEA}
   }
 
   // ---------------- conta (espelho de cascata_simples e projecao_simples em asset_management.py)
-  // Q = {C: credito, d: desconto, Df: fatura da distribuidora, Rc: recorrencia do canal, p: fee %, co: custo da operacao}, valores por cliente ativo/mes
+  // Q = {C: credito, d: desconto, Df: fatura da distribuidora, Rc: recorrencia do canal, p: fee %, co: custo da operacao,
+  //      cp: comissao de parceiro %, cq: quem paga a comissao ("g" Gerador, "t" Thopen)}, valores por cliente ativo/mes
+  // arrecadacao = fatura + canal + fee liquido + comissao + gerador nos dois casos (comissao paga pela ACER na cascata)
   function cascata(Q, i) {
     var F = Q.C * (1 - Q.d), bruto = F + Q.Df, arr = bruto * (1 - i), feeP = Q.p * F, fee = feeP + Q.co;
+    var com = (Q.cp || 0) * F, peloGer = Q.cq !== "t";
     return {C: Q.C, desc: Q.C - F, F: F, Df: Q.Df, bruto: bruto, perda: bruto * i, arr: arr, vaz: Q.Df * i, Rc: Q.Rc,
-      feeP: feeP, co: Q.co, fee: fee, ger: arr - Q.Df - Q.Rc - fee, i: i};
+      feeP: feeP, co: Q.co, fee: fee, com: com, feeL: peloGer ? fee : fee - com, ger: arr - Q.Df - Q.Rc - fee - (peloGer ? com : 0), i: i};
   }
   function leitura() {
     var falta = [], inval = [], reg = [];
     var req = function (id) { var v = n(id); if (v == null) falta.push(id); else if (isNaN(v)) inval.push(id); return ok(v) ? v : null; };
     var opc = function (id) { var v = n(id); if (v != null && isNaN(v)) { inval.push(id); return null; } return v; };
     var Q = {tf: req("f-tarifa"), k: req("f-consumo"), d: req("f-desc"), Df: req("f-df"), i: req("f-inad"), Rc: opc("f-canal"),
-      p: req("f-fee"), co: req("f-custo"), w: opc("f-ocup")};
+      p: req("f-fee"), co: req("f-custo"), w: opc("f-ocup"), cp: opc("f-com"), cq: $("f-compag").value === "t" ? "t" : "g", parc: txt("f-parceiro")};
     var pr = req("f-prazo");
     if (Q.Rc == null) Q.Rc = 0;
+    if (Q.cp == null) Q.cp = 0;
+    if (!(Q.cp >= 0 && Q.cp < 1)) reg.push("Comissão do parceiro deve estar entre 0% e 100%.");
     if (Q.w == null) Q.w = 1;
     if (Q.tf != null && !(Q.tf > 0)) reg.push("A tarifa compensável deve ser maior que zero.");
     if (Q.k != null && !(Q.k > 0)) reg.push("O consumo médio deve ser maior que zero.");
@@ -401,18 +413,18 @@ td.neg{color:var(--vermelho);font-weight:600;background:#FDECEA}
     return {ok: temFb, anos: out};
   }
   function projeta(U) {
-    var Q = U.Q, X = U.X, FB = fatoresFioB(U), anos = [], tot = {fee: 0, ger: 0, feeV: 0, gerV: 0};
+    var Q = U.Q, X = U.X, FB = fatoresFioB(U), anos = [], K = ["fee", "com", "feeL", "ger"], tot = {};
+    K.forEach(function (k) { tot[k] = 0; tot[k + "V"] = 0; });
     for (var t = 0; t < X.prazo; t++) {
       var ft = Math.pow(1 + X.rt, t), fc = Math.pow(1 + X.rc, t), fb = FB.anos[t];
-      var r = cascata({C: Q.C * fb.f * ft, d: Q.d, Df: Q.Df * ft, Rc: Q.Rc * fc, p: Q.p, co: Q.co * fc}, Q.i);
+      var r = cascata({C: Q.C * fb.f * ft, d: Q.d, Df: Q.Df * ft, Rc: Q.Rc * fc, p: Q.p, co: Q.co * fc, cp: Q.cp, cq: Q.cq}, Q.i);
       var Nt = U.N ? Math.floor(U.N * Math.pow(1 - X.deg, t) + 1e-9) : null, at = Nt ? Nt * Q.w : 1;
-      var lin = {t: t, ano: X.ano + t, pfb: fb.pfb, tarifa: fb.tk * ft, N: Nt, at: at, r: r, fee: r.fee * at * 12, ger: r.ger * at * 12};
+      var lin = {t: t, ano: X.ano + t, pfb: fb.pfb, tarifa: fb.tk * ft, N: Nt, at: at, r: r};
       var dsc = X.taxa == null ? null : Math.pow(1 + X.taxa, t + 1);
-      tot.fee += lin.fee; tot.ger += lin.ger;
-      if (dsc) { tot.feeV += lin.fee / dsc; tot.gerV += lin.ger / dsc; }
+      K.forEach(function (k) { lin[k] = r[k] * at * 12; tot[k] += lin[k]; if (dsc) tot[k + "V"] += lin[k] / dsc; });
       anos.push(lin);
     }
-    if (X.taxa == null) { tot.feeV = null; tot.gerV = null; }
+    if (X.taxa == null) K.forEach(function (k) { tot[k + "V"] = null; });
     return {anos: anos, fioB: FB.ok, porCliente: !U.N, tot: tot};
   }
 
@@ -457,14 +469,25 @@ td.neg{color:var(--vermelho);font-weight:600;background:#FDECEA}
     if (U.vc != null) L.push(["Tarifa cheia com tributos (referência da distribuidora)"].concat(kv(U.vc * k)));
     L.push(["Tarifa compensável (crédito por kWh)"].concat(kv(r.C)), ["Tarifa que o cliente paga pela energia (com desconto de " + pcc(Q.d) + ")"].concat(kv(r.F)),
       ["Economia do cliente (crédito menos energia com desconto)"].concat(kv(r.desc)));
-    if (U.vc != null) L.push(["Economia do cliente vs tarifa cheia (sem a fatura da distribuidora)"].concat(kv(U.vc * k - r.F)));
     L.push(["Fee Thopen"], ["Fee de " + pcc(Q.p) + " da energia faturada com desconto"].concat(kv(r.feeP)), ["Custo da operação"].concat(kv(r.co)),
-      cls(["Fee Thopen total"].concat(kv(r.fee)), "tot"), ["Gerador"], cls(["Gerador (saldo da cascata)"].concat(kv(r.ger)), "tot"));
+      cls(["Fee Thopen total"].concat(kv(r.fee)), "tot"));
+    if (temCom(U)) {
+      L.push([comRot(Q)], [comDesc(Q)].concat(kv(r.com)));
+      if (Q.cq === "t") L.push(cls(["Fee líquido da Thopen (fee total - comissão)"].concat(kv(r.feeL)), "tot"));
+    }
+    L.push(["Gerador"], cls(["Gerador (saldo da cascata)"].concat(kv(r.ger)), "tot"));
     return L;
   }
+  // comissao de parceiro: so aparece com % maior que zero
+  function temCom(U) { return U.Q.cp > 0; }
+  function comRot(Q) { return "Comissão de parceiro" + (Q.parc ? " (" + Q.parc + ")" : ""); }
+  function comPag(Q) { return Q.cq === "t" ? "paga pela Thopen (sai do fee)" : "paga pelo Gerador (sai do repasse)"; }
+  function comDesc(Q) { return "Comissão de " + pcc(Q.cp) + " da energia faturada com desconto, " + comPag(Q); }
   function kwhNota(U) {
     return "Consumo médio de " + f0.format(U.Q.k) + " kWh por cliente/mês: R$/kWh = R$ por cliente/mês / consumo médio. Tarifa compensável = crédito / consumo; tarifa do cliente = energia faturada com desconto / consumo." +
-      " Gerador por kWh já descontados a fatura da distribuidora, a inadimplência de " + pcc(U.Q.i) + (U.Q.Rc ? ", a recorrência do canal" : "") + " e o fee Thopen.";
+      " Gerador por kWh já descontados a fatura da distribuidora, a inadimplência de " + pcc(U.Q.i) + (U.Q.Rc ? ", a recorrência do canal" : "") +
+      (temCom(U) && U.Q.cq !== "t" ? ", o fee Thopen e a comissão de parceiro." : " e o fee Thopen.") +
+      (temCom(U) && U.Q.cq === "t" ? " A comissão de parceiro é paga pela ACER a partir do fee Thopen e não altera o Gerador." : "");
   }
   function cascCab(U) {
     var c = ["Item", "R$ por cliente/mês"];
@@ -473,29 +496,51 @@ td.neg{color:var(--vermelho);font-weight:600;background:#FDECEA}
   function cascLinhas(U) {
     var r = U.r, Q = U.Q, at = U.at;
     var v = function (rot, x, c) { var l = [rot, N(x)]; if (at) l.push(N(x * at), N(x * at * 12)); return c ? cls(l, c) : l; };
-    return [["Cliente e ACER"], v("Crédito de energia compensada (consumo x tarifa compensável)", r.C), v("(-) Desconto ao cliente (" + pcc(Q.d) + ")", -r.desc),
+    var base = [["Cliente e ACER"], v("Crédito de energia compensada (consumo x tarifa compensável)", r.C), v("(-) Desconto ao cliente (" + pcc(Q.d) + ")", -r.desc),
       v("Energia faturada com desconto", r.F), v("(+) Fatura da distribuidora repassada ao cliente", r.Df), v("Valor faturado ao cliente", r.bruto),
       v("(-) Inadimplência (" + pcc(r.i) + ")", -r.perda), v("Arrecadação da ACER", r.arr, "tot"),
       v("(-) Fatura da distribuidora paga pela ACER", -r.Df), v("(-) Recorrência do canal", -r.Rc),
-      ["Fee Thopen (sênior)"], v("Fee de " + pcc(Q.p) + " da energia faturada com desconto", r.feeP), v("Custo da operação por UC", r.co), v("Fee Thopen total", r.fee, "tot"),
-      ["Gerador"], v("Gerador (arrecadação - fatura da distribuidora - canal - fee Thopen)", r.ger, "tot")];
+      ["Fee Thopen (sênior)"], v("Fee de " + pcc(Q.p) + " da energia faturada com desconto", r.feeP), v("Custo da operação por UC", r.co), v("Fee Thopen total", r.fee, "tot")];
+    var L = base;
+    if (temCom(U)) {
+      L.push([comRot(Q)]);
+      if (Q.cq === "t") L.push(v("Comissão de " + pcc(Q.cp) + " da energia faturada com desconto, paga pela ACER a partir do fee Thopen", r.com),
+        v("Fee líquido da Thopen (fee total - comissão)", r.feeL, "tot"));
+      else L.push(v("(-) Comissão de " + pcc(Q.cp) + " da energia faturada com desconto, paga pelo Gerador", -r.com));
+    }
+    L.push(["Gerador"], v("Gerador (arrecadação - fatura da distribuidora - canal - fee Thopen" + (temCom(U) && Q.cq !== "t" ? " - comissão" : "") + ")", r.ger, "tot"));
+    return L;
   }
   function projCab(U) {
     var u = U.proj.porCliente ? " (R$ por cliente ativo/ano)" : " (R$/ano na usina)";
-    return ["Ano", "% Fio B", "Tarifa compensável (R$/kWh)", "Clientes ativos", "Fee Thopen (R$/cliente/mês)", "Gerador (R$/cliente/mês)", "Fee Thopen" + u, "Gerador" + u];
+    var c = ["Ano", "% Fio B", "Tarifa compensável (R$/kWh)", "Clientes ativos", "Fee Thopen (R$/cliente/mês)"];
+    if (temCom(U)) c.push("Comissão de parceiro (R$/cliente/mês)");
+    if (projLiq(U)) c.push("Fee líquido da Thopen (R$/cliente/mês)");
+    c.push("Gerador (R$/cliente/mês)", "Fee Thopen" + u);
+    if (temCom(U)) c.push("Comissão de parceiro" + u);
+    if (projLiq(U)) c.push("Fee líquido da Thopen" + u);
+    return c.concat(["Gerador" + u]);
   }
+  function projLiq(U) { return temCom(U) && U.Q.cq === "t"; }
   function projLinhas(U) {
-    var P = U.proj, L = P.anos.map(function (l) {
-      return [String(l.ano), l.pfb == null ? "-" : N(l.pfb, "pct"), N(l.tarifa, "n4"), l.N ? N(l.at, "n1") : "-", N(l.r.fee), N(l.r.ger), N(l.fee), N(l.ger)];
+    var P = U.proj, com = temCom(U), liq = projLiq(U);
+    var anual = function (o) { var a = [N(o.fee)]; if (com) a.push(N(o.com)); if (liq) a.push(N(o.feeL)); return a.concat([N(o.ger)]); };
+    var vaz = 6 + (com ? 1 : 0) + (liq ? 1 : 0), branco = function (rot) { var a = [rot]; for (var j = 1; j < vaz; j++) a.push(""); return a; };
+    var L = P.anos.map(function (l) {
+      var a = [String(l.ano), l.pfb == null ? "-" : N(l.pfb, "pct"), N(l.tarifa, "n4"), l.N ? N(l.at, "n1") : "-", N(l.r.fee)];
+      if (com) a.push(N(l.r.com));
+      if (liq) a.push(N(l.r.feeL));
+      return a.concat([N(l.r.ger)], anual(l));
     });
-    L.push(cls(["Total " + U.X.prazo + " anos", "", "", "", "", "", N(P.tot.fee), N(P.tot.ger)], "tot"));
-    if (P.tot.feeV != null) L.push(cls(["VPL a " + pc(U.X.taxa) + " a.a.", "", "", "", "", "", N(P.tot.feeV), N(P.tot.gerV)], "tot"));
+    var T = P.tot;
+    L.push(cls(branco("Total " + U.X.prazo + " anos").concat(anual(T)), "tot"));
+    if (T.feeV != null) L.push(cls(branco("VPL a " + pc(U.X.taxa) + " a.a.").concat(anual({fee: T.feeV, com: T.comV, feeL: T.feeLV, ger: T.gerV})), "tot"));
     return L;
   }
   function projTexto(U) {
     var X = U.X, T = U.tar, ipc = function (v, pad) { return pc(v) + " a.a." + (pad ? (X.ipca != null ? " (IPCA 12 meses)" : " (IPCA indisponível)") : ""); };
     return "Prazo de " + X.prazo + " anos a partir de " + X.ano + ". Tarifa e fatura da distribuidora reajustadas em " + ipc(X.rt, X.rtPad) + "; custo da operação e recorrência do canal em " + ipc(X.rc, X.rcPad) +
-      ". O fee % acompanha a energia faturada com desconto. " +
+      ". O fee %" + (temCom(U) ? " e a comissão de parceiro acompanham" : " acompanha") + " a energia faturada com desconto (reajuste da tarifa e Fio B). " +
       (U.proj.fioB ? GDN[T.gd] + " em " + T.nome + ": o Fio B efetivo sobe pela Lei 14.300 (2026 60%, 2027 75%, 2028 90%, 2029 em diante 100%) e reduz a tarifa compensável." :
         T ? (T.gd === "I" ? "GD I: sem Fio B, a tarifa só segue o reajuste." : "Fio B SCEE indisponível: a tarifa só segue o reajuste.") :
         "Sem distribuidora da lista: o Fio B não é escalonado; a tarifa só segue o reajuste.") +
@@ -503,13 +548,29 @@ td.neg{color:var(--vermelho);font-weight:600;background:#FDECEA}
       (U.proj.porCliente ? " Sem capacidade da usina: valores por cliente ativo." : "") + (X.taxa != null ? " VPL com fluxos no fim de cada ano." : "");
   }
   function sensCab(U) {
-    var c = ["Inadimplência", "Fee Thopen (R$/cliente/mês)", "Gerador (R$/cliente/mês)", "Gerador (R$/kWh)"];
-    return U.N ? c.concat(["Fee Thopen na usina (R$/mês)", "Gerador na usina (R$/mês)"]) : c;
+    var com = temCom(U), liq = projLiq(U), c = ["Inadimplência", "Fee Thopen (R$/cliente/mês)"];
+    if (com) c.push("Comissão de parceiro (R$/cliente/mês)");
+    if (liq) c.push("Fee líquido da Thopen (R$/cliente/mês)");
+    c.push("Gerador (R$/cliente/mês)", "Gerador (R$/kWh)");
+    if (!U.N) return c;
+    c.push("Fee Thopen na usina (R$/mês)");
+    if (com) c.push("Comissão de parceiro na usina (R$/mês)");
+    if (liq) c.push("Fee líquido da Thopen na usina (R$/mês)");
+    return c.concat(["Gerador na usina (R$/mês)"]);
   }
   function sensLinhas(U) {
+    var com = temCom(U), liq = projLiq(U);
     return U.sens.map(function (r) {
-      var l = [N(r.i, "pct"), N(r.fee), N(r.ger), N(r.ger / U.Q.k, "brl4")];
-      if (U.N) l.push(N(r.fee * U.at), N(r.ger * U.at));
+      var l = [N(r.i, "pct"), N(r.fee)];
+      if (com) l.push(N(r.com));
+      if (liq) l.push(N(r.feeL));
+      l.push(N(r.ger), N(r.ger / U.Q.k, "brl4"));
+      if (U.N) {
+        l.push(N(r.fee * U.at));
+        if (com) l.push(N(r.com * U.at));
+        if (liq) l.push(N(r.feeL * U.at));
+        l.push(N(r.ger * U.at));
+      }
       return Math.abs(r.i - U.Q.i) < 1e-9 ? cls(l, "atual") : l;
     });
   }
@@ -519,6 +580,10 @@ td.neg{color:var(--vermelho);font-weight:600;background:#FDECEA}
     L.push({tit: "Fee sênior na cascata", txt: "A ACER arrecada do cliente, paga a fatura da distribuidora, a recorrência do canal e o fee Thopen, nesta ordem, e repassa o saldo ao Gerador. O fee é pago antes do repasse; inadimplência e fatura da distribuidora não paga ficam no repasse ao Gerador."});
     L.push({tit: "Base de cálculo do fee", txt: "Fee de " + pcc(Q.p) + " sobre a energia faturada com desconto ao cliente (premissa: " + brl(U.r.F) + " por cliente/mês), devido independentemente do valor arrecadado, mais custo da operação de " +
       brl(Q.co) + " por UC ativa por mês. Fee total na premissa: " + brl(U.r.fee) + " por cliente/mês."});
+    if (temCom(U)) L.push({tit: "Comissão de parceiro", txt: "Comissão de parceiro" + (Q.parc ? " (" + Q.parc + ")" : "") + ": " + pcc(Q.cp) + " da energia faturada com desconto, " +
+      (Q.cq === "t" ? "paga pela Thopen: a ACER paga a comissão a partir do fee Thopen, sem alterar o repasse ao Gerador (fee líquido da Thopen na premissa: " + brl(U.r.feeL) + " por cliente/mês)"
+        : "paga pelo Gerador: a ACER paga a comissão na cascata e a desconta do repasse ao Gerador") +
+      ". Premissa: " + brl(U.r.com) + " por cliente/mês; acompanha a energia faturada com desconto e não varia com a inadimplência."});
     L.push({tit: "Desconto máximo ao cliente", txt: "Desconto pré-acordado com o Gerador" + (ok(dm) ? ", com faixa máxima de " + pcc(dm) : ", com faixa máxima a definir") +
       " (premissa atual: " + pcc(Q.d) + "). Descontos acima da faixa exigem aprovação prévia do Gerador."});
     L.push({tit: "SLA de cobrança", txt: "Régua de cobrança " + (reg ? "(" + reg + ")" : "definida em anexo") + "; início da cobrança em " + (s1 != null ? f0.format(s1) + " dias" : "prazo a definir") +
@@ -556,6 +621,11 @@ td.neg{color:var(--vermelho);font-weight:600;background:#FDECEA}
     L.push(["Cliente"], ["Consumo médio (kWh/cliente/mês)", N(Q.k, "int")], ["Desconto ao cliente", N(Q.d, "pct")], ["Fatura da distribuidora repassada (R$/cliente/mês)", N(Q.Df)],
       ["Inadimplência", N(Q.i, "pct")], ["Recorrência do canal (R$/cliente/mês)", N(Q.Rc)]);
     L.push(["Fee Thopen"], ["Fee (% da energia faturada com desconto)", N(Q.p, "pct")], ["Custo da operação (R$/UC/mês)", N(Q.co)]);
+    if (temCom(U)) {
+      L.push(["Comissão de parceiro"], ["Comissão do parceiro (% da energia faturada com desconto)", N(Q.cp, "pct")]);
+      if (Q.parc) L.push(["Parceiro", Q.parc]);
+      L.push(["Quem paga a comissão", Q.cq === "t" ? "Thopen (sai do fee)" : "Gerador (sai do repasse)"]);
+    }
     L.push(["Prazo e reajustes"], ["Prazo do contrato (anos)", N(X.prazo, "int")], ["Reajuste anual da tarifa", N(X.rt, "pct")], ["Reajuste do custo da operação", N(X.rc, "pct")]);
     if (X.taxa != null) L.push(["Taxa para VPL", N(X.taxa, "pct")]);
     return L;
@@ -568,7 +638,7 @@ td.neg{color:var(--vermelho);font-weight:600;background:#FDECEA}
       {nome: "Cascata", tit: "Cascata de pagamentos", blocos: [{cab: cascCab(U), linhas: cascLinhas(U), nota: usinaTexto(U)}]},
       {nome: "Projeção", tit: "Projeção no prazo do contrato", blocos: [{cab: projCab(U), linhas: projLinhas(U), nota: projTexto(U)}]},
       {nome: "Sensibilidade", tit: "Sensibilidade à inadimplência", blocos: [{cab: sensCab(U), linhas: sensLinhas(U),
-        nota: "O fee Thopen não muda com a inadimplência (incide sobre a energia faturada com desconto); a variação fica com o Gerador."}]},
+        nota: "O fee Thopen e a comissão de parceiro não mudam com a inadimplência (incidem sobre a energia faturada com desconto); a variação fica com o Gerador."}]},
       {nome: "Cláusulas", tit: "Cláusulas essenciais", blocos: [{cab: ["Cláusula", "Texto"], linhas: U.claus.map(function (c) { return [c.tit, c.txt]; })}]}
     ];
   }
@@ -589,6 +659,8 @@ td.neg{color:var(--vermelho);font-weight:600;background:#FDECEA}
     var r = U.r, k = U.Q.k, P = U.proj;
     var ks = kpi("Fee Thopen", brl(r.fee) + " por cliente/mês", brl4(r.fee / k) + "/kWh" + (U.N ? "; " + brl(r.fee * U.at * 12) + " por ano na usina" : "")) +
       kpi("Gerador", brl(r.ger) + " por cliente/mês", brl4(r.ger / k) + "/kWh" + (U.N ? "; " + brl(r.ger * U.at * 12) + " por ano na usina" : "")) +
+      (temCom(U) ? kpi(comRot(U.Q), brl(r.com) + " por cliente/mês", brl4(r.com / k) + "/kWh; " + comPag(U.Q) + (U.N ? "; " + brl(r.com * U.at) + " por mês na usina" : "")) : "") +
+      (projLiq(U) ? kpi("Fee líquido da Thopen", brl(r.feeL) + " por cliente/mês", brl4(r.feeL / k) + "/kWh" + (U.N ? "; " + brl(r.feeL * U.at) + " por mês na usina" : "")) : "") +
       kpi("Fee Thopen em " + U.X.prazo + " anos", brl(P.tot.fee), P.porCliente ? "por cliente ativo" : "na usina") +
       kpi("Gerador em " + U.X.prazo + " anos", brl(P.tot.ger), P.porCliente ? "por cliente ativo" : "na usina");
     $("kpis").innerHTML = ks;
