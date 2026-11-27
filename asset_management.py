@@ -9,6 +9,8 @@ percentuais como fracao (0,15 = 15%).
     fee               = % x energia faturada com desconto + fixo
     gerador (antes SF)= arrecadacao - fatura distribuidora - recorrencia do canal - fee
     success fee       = % success fee x max(0, gerador antes SF - meta)            (so na Proposta B)
+    meta por ano      = meta inicial x tarifa compensavel do ano / tarifa compensavel do ano de inicio (padrao, inclui o
+                        Fio B), resultado do Gerador no cenario base do ano, reajuste da tarifa ou fixa (META_REAJUSTE)
     resultado Thopen  = receita x (1 - impostos) - custo de operacao - G&A / ocupacao
     hoje (take rate)  : gerador = take rate x credito bruto; Thopen fica com o resto da cascata e
                         so paga imposto quando a receita e positiva.
@@ -261,12 +263,35 @@ def premissas_ano(p: Premissas, t: int, reaj_tarifa: float = 0.0, reaj_custos: f
                    ocupacao=p.ocupacao if ocupacao is None else ocupacao, clientes=n)
 
 
+META_REAJUSTE = ("comp", "base", "tarifa", "fixa")
+
+
+def meta_ano(meta0: Optional[float], modo: str, ft: float, ff: float, ff0: float = 1.0,
+             g0_base: Optional[float] = None) -> Optional[float]:
+    """Meta do success fee no ano. modo "comp" (padrao): meta inicial x tarifa compensavel do ano / do ano de inicio
+    (= (1 + reajuste da tarifa)^t x fator do Fio B do ano / fator do ano de inicio; GD I = reajuste da tarifa);
+    "base": resultado do Gerador antes do success fee no cenario base do ano (g0_base: success fee so sobre o desempenho
+    acima da base); "tarifa": meta inicial x (1 + reajuste da tarifa)^t (regra anterior); "fixa": meta inicial."""
+    if modo == "base":
+        return g0_base
+    if meta0 is None:
+        return None
+    if modo == "fixa":
+        return meta0
+    if modo == "tarifa":
+        return meta0 * ft
+    if modo == "comp":
+        return meta0 * ft * ff / ff0
+    raise ValueError("reajuste da meta desconhecido: " + str(modo))
+
+
 def projecao(p: Premissas, anos: int, take_rate: float, a: dict, b: dict, reaj_tarifa: float = 0.0,
              reaj_custos: float = 0.0, fatores_fio_b: Optional[list[float]] = None, ocupacao_ano1: Optional[float] = None,
              degradacao: float = 0.0, perfil_inad: Optional[list[float]] = None) -> list[dict]:
     """Projecao ano a ano de Hoje, Proposta A e Proposta B. a = {pct, fixo, cap}; b = {pct, fixo, sigma, meta, cap,
-    carry, zerar}: fee fixo pelo reajuste dos custos (cap = fee fixo sobre a capacidade); meta do success fee pelo
-    reajuste da tarifa (meta None = resultado do Gerador antes do success fee no ano 0, com a ocupacao base).
+    carry, zerar, meta_reaj}: fee fixo pelo reajuste dos custos (cap = fee fixo sobre a capacidade); meta do success fee
+    reajustada por meta_ano (meta_reaj, padrao "comp"; meta None = resultado do Gerador antes do success fee no ano 0,
+    com a ocupacao base; "base" ignora a meta informada).
     Cada ano simula 12 meses com o perfil mensal de inadimplencia (padrao: a inadimplencia base em todos os meses);
     o success fee de B e apurado mes a mes, simples ou com saldo acumulado (carry = True; zerar = saldo zerado no
     inicio de cada ano). por_cliente = media mensal por cliente ativo; valores anuais = soma dos 12 meses x clientes
@@ -274,6 +299,8 @@ def projecao(p: Premissas, anos: int, take_rate: float, a: dict, b: dict, reaj_t
     meta0 = b.get("meta")
     if b.get("sigma") and meta0 is None:
         meta0 = proposta(p, b["pct"], b["fixo"], capacidade=b.get("cap", False))["gerador_antes_sf"]
+    modo = b.get("meta_reaj", "comp")
+    ff0 = fatores_fio_b[0] if fatores_fio_b else 1.0
     out, saldo = [], 0.0
     for t in range(int(anos)):
         ff = fatores_fio_b[t] if fatores_fio_b else 1.0
@@ -281,7 +308,8 @@ def projecao(p: Premissas, anos: int, take_rate: float, a: dict, b: dict, reaj_t
         pt = premissas_ano(p, t, reaj_tarifa, reaj_custos, ff, oc, degradacao)
         ft, fc = (1.0 + reaj_tarifa) ** t, (1.0 + reaj_custos) ** t
         meses = [replace(pt, inadimplencia=i) for i in (perfil_inad or [pt.inadimplencia] * 12)]
-        meta_t = meta0 * ft if meta0 is not None else None
+        g0b = proposta(pt, b["pct"], b["fixo"] * fc, capacidade=b.get("cap", False))["gerador_antes_sf"]
+        meta_t = meta_ano(meta0, modo, ft, ff, ff0, g0b)
         rh = [hoje(pm, take_rate) for pm in meses]
         ra = [proposta(pm, a["pct"], a["fixo"] * fc, capacidade=a.get("cap", False)) for pm in meses]
         piso = [proposta(pm, b["pct"], b["fixo"] * fc, capacidade=b.get("cap", False)) for pm in meses]
@@ -383,12 +411,16 @@ def valores_kwh(p: Premissas, r: dict, consumo: Optional[float] = None, tarifa_c
 
 def arrendamento_mwh(tusd: float, te: float, icms: float, pc: float, flag_te: int = 1, flag_tusd: int = 1,
                      s: float = 0.5, d: float = 0.3, c: float = 0.0, fb_ef: float = 0.0,
-                     fb_com_impostos: bool = True) -> dict:
+                     fb_com_impostos: bool = True, base_desconto: Optional[float] = None) -> dict:
     """Porte de calc_arrendamento (monitor_tarifas.py) usado na pagina, por MWh compensado (R$/MWh).
     k_PC = 1/(1-pc); k_full = 1/((1-icms)(1-pc)); W_I = TUSD.k_TUSD + TE.k_TE; U = TUSD + TE; Y = W_I - U.
     Custo do Fio B (pago pelo dono) = Fio B efetivo x k_full (com impostos) ou Fio B efetivo (sem impostos).
     dono = (1 - d).U + s.Y - custo do Fio B; Thopen = d.U + (1 - s).Y; desconto = c.W_I; margem = Thopen - desconto.
-    O cliente paga W_I.(1 - c) - custo do Fio B (= dono + margem): e a base da inadimplencia na versao comparavel."""
+    O cliente paga valor bruto - desconto (= dono + margem): e a base da inadimplencia na versao comparavel.
+    base_desconto (R$/MWh): None = convencao do painel (valor bruto = W_I - custo do Fio B, desconto = c x W_I);
+    com a tarifa compensavel do Asset (R$/MWh): valor bruto = tarifa compensavel e desconto = c x tarifa compensavel,
+    entao o cliente paga o mesmo que no Asset (energia faturada com desconto) e recebe o mesmo desconto em R$.
+    margem = cliente paga - dono (no painel = parte da Thopen - desconto)."""
     k_pc = 1.0 / (1.0 - pc)
     k_full = 1.0 / ((1.0 - icms) * (1.0 - pc))
     k_te = k_full if flag_te else k_pc
@@ -399,10 +431,12 @@ def arrendamento_mwh(tusd: float, te: float, icms: float, pc: float, flag_te: in
     cfb = fb_ef * k_full if fb_com_impostos else fb_ef
     dono = (1.0 - d) * u + s * y - cfb
     th = d * u + (1.0 - s) * y
-    desc = c * w
+    desc = c * (w if base_desconto is None else base_desconto)
+    bruto = w - cfb if base_desconto is None else base_desconto
     return {"U": u, "W_I": w, "Y": y, "V": u * k_full, "k_full": k_full, "custo_fb": cfb, "s": s, "d": d, "c": c,
-            "dono": dono, "thopen": th, "desconto": desc, "margem": th - desc, "preco_kwh": dono / 1000.0,
-            "desagio_impl": 1.0 - dono / u if u else None, "cliente_paga": w * (1.0 - c) - cfb}
+            "dono": dono, "thopen": th, "desconto": desc, "margem": bruto - desc - dono, "bruto": bruto, "preco_kwh": dono / 1000.0,
+            "desagio_impl": 1.0 - dono / u if u else None, "cliente_paga": bruto - desc,
+            "base_desconto": w if base_desconto is None else base_desconto}
 
 
 def desagio_por_preco_arr(r: dict, preco_kwh: float) -> Optional[float]:
@@ -425,6 +459,7 @@ def arrendamento_mes(p: Premissas, r: dict, q_usina: float, q_vendida: float, at
     imp = receita * p.impostos if receita > 0 else 0.0
     custos = (p.custo_operacao + ga_por_ativo(p)) * ativos
     return {"gerador": gerador, "margem_painel": r["margem"] * q_usina, "energia_cliente": energia, "arrecadacao": arr,
+            "desconto_cliente": r["desconto"] * q_vendida,
             "receita": receita, "impostos": imp, "custos": custos, "thopen": receita - imp - custos,
             "q_usina": q_usina, "q_vendida": q_vendida}
 
@@ -434,28 +469,35 @@ def projecao_arrendamento_asset(p: Premissas, anos: int, tar: dict, pct_fb: list
                                 preco_kwh: Optional[float] = None, fb_com_impostos: bool = True,
                                 reaj_tarifa: float = 0.0, reaj_custos: float = 0.0,
                                 q_usina_mes: Optional[float] = None, degradacao: float = 0.0,
-                                ocupacao_ano1: Optional[float] = None) -> list[dict]:
+                                ocupacao_ano1: Optional[float] = None, base_desconto: str = "painel",
+                                fatores_fio_b: Optional[list[float]] = None) -> list[dict]:
     """Arrendamento ano a ano, na mesma linha do tempo da projecao do Asset. tar = {tusd, te, icms, pc, flag_te,
     flag_tusd, fio_b_scee} (R$/MWh, como tarifas_asset.json); pct_fb[t] = % do Fio B no ano civil (GD I = 0).
     TUSD, TE e Fio B SCEE x (1 + reajuste da tarifa)^t (como projecao_arrendamento do painel); preco_kwh (se dado)
     e reajustado pelo mesmo indice e o d de cada ano sai de desagio_por_preco. Energia vendida = clientes ativos x
-    consumo; energia da usina = q_usina_mes x (1 - degradacao)^t (sem capacidade: = energia vendida). Valores anuais."""
+    consumo; energia da usina = q_usina_mes x (1 - degradacao)^t (sem capacidade: = energia vendida). Valores anuais.
+    base_desconto: "painel" (desconto = c x W_I, como calc_arrendamento) ou "asset" (desconto = c x tarifa compensavel
+    do ano = credito do ano / consumo, com os fatores do Fio B da projecao do Asset; na pagina, "asset" e o padrao):
+    o cliente recebe o mesmo desconto em R$ nos dois modelos. desconto_cliente = R$ por cliente ativo por mes."""
     out = []
     for t in range(int(anos)):
         f = (1.0 + reaj_tarifa) ** t
         fb = tar["fio_b_scee"] * f * pct_fb[t] if tar.get("fio_b_scee") else 0.0
         args = (tar["tusd"] * f, tar["te"] * f, tar["icms"], tar["pc"], tar["flag_te"], tar["flag_tusd"])
+        oc = ocupacao_ano1 if (t == 0 and ocupacao_ano1 is not None) else None
+        ff = fatores_fio_b[t] if fatores_fio_b else 1.0
+        pt = premissas_ano(p, t, reaj_tarifa, reaj_custos, ff, oc, degradacao)
+        bd = pt.credito / consumo * 1000.0 if base_desconto == "asset" else None
         dt = d
         if preco_kwh is not None:
-            r0 = arrendamento_mwh(*args, s, 0.0, c, fb, fb_com_impostos)
+            r0 = arrendamento_mwh(*args, s, 0.0, c, fb, fb_com_impostos, bd)
             dt = desagio_por_preco_arr(r0, preco_kwh * f)
-        r = arrendamento_mwh(*args, s, dt, c, fb, fb_com_impostos)
-        oc = ocupacao_ano1 if (t == 0 and ocupacao_ano1 is not None) else None
-        pt = premissas_ano(p, t, reaj_tarifa, reaj_custos, 1.0, oc, degradacao)
+        r = arrendamento_mwh(*args, s, dt, c, fb, fb_com_impostos, bd)
         ativos = pt.clientes * pt.ocupacao if pt.clientes else 1.0
         qv = ativos * consumo / 1000.0
         qu = q_usina_mes * (1.0 - degradacao) ** t if q_usina_mes is not None else qv
         m = arrendamento_mes(pt, r, qu, min(qv, qu), ativos)
-        out.append({"t": t, "d": dt, "mwh": r, "mes": m, "ativos": ativos,
+        out.append({"t": t, "d": dt, "mwh": r, "mes": m, "ativos": ativos, "premissas": pt,
+                    "desconto_cliente": r["desconto"] * consumo / 1000.0,
                     **{k: m[k] * 12 for k in ("gerador", "margem_painel", "thopen", "receita")}})
     return out

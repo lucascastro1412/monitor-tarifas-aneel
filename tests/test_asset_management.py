@@ -624,3 +624,156 @@ def test_pdf_gerador_bloqueia_arrendamento_e_reverso():
     campos = re.search(r"var GER_CAMPOS = \[(.*?)\];", h, re.S).group(1)
     assert '"sfApuracao"' in campos and '"sfSens"' in campos
     assert '"arr' not in campos and '"reverso' not in campos
+
+
+# ---------------- reajuste da meta do success fee (Proposta B)
+
+FB_ = [1.0, 0.96, 0.92, 0.88, 0.88, 0.88]  # fatores do Fio B inventados (GD II): a tarifa compensavel cai
+
+
+def _meta0(p, b):
+    return am.proposta(p, b["pct"], b["fixo"], capacidade=b.get("cap", False))["gerador_antes_sf"]
+
+
+def test_meta_valor_compensado_inclui_fio_b_e_gd1_igual_reajuste():
+    p = _p()
+    pr = am.projecao(p, 6, 0.6, A_, dict(B_, meta_reaj="comp"), reaj_tarifa=0.05, reaj_custos=0.04, fatores_fio_b=FB_)
+    m0 = _meta0(p, B_)
+    for x in pr:
+        t = x["t"]
+        assert x["meta"] == pytest.approx(m0 * 1.05 ** t * FB_[t])
+        # meta / tarifa compensavel (credito por cliente) constante: acompanha o valor compensado com o Fio B
+        assert x["meta"] / x["premissas"].credito == pytest.approx(m0 / p.credito)
+    # GD I (sem Fio B): igual ao reajuste da tarifa
+    g1 = am.projecao(p, 6, 0.6, A_, dict(B_, meta_reaj="comp"), reaj_tarifa=0.05, reaj_custos=0.04)
+    g1t = am.projecao(p, 6, 0.6, A_, dict(B_, meta_reaj="tarifa"), reaj_tarifa=0.05, reaj_custos=0.04)
+    assert [x["meta"] for x in g1] == pytest.approx([x["meta"] for x in g1t])
+    # padrao da projecao = valor compensado
+    pad = am.projecao(p, 6, 0.6, A_, B_, reaj_tarifa=0.05, reaj_custos=0.04, fatores_fio_b=FB_)
+    assert [x["meta"] for x in pad] == pytest.approx([x["meta"] for x in pr])
+
+
+def test_meta_valor_compensado_mantem_success_fee_com_fio_b():
+    p = _p()
+    perfil = am.perfil_alternado(0.10, 0.05)
+    kw = dict(reaj_tarifa=0.05, reaj_custos=0.05, fatores_fio_b=FB_, perfil_inad=perfil)
+    comp = am.projecao(p, 6, 0.6, A_, dict(B_, meta_reaj="comp"), **kw)
+    old = am.projecao(p, 6, 0.6, A_, dict(B_, meta_reaj="tarifa"), **kw)
+    assert comp[0]["success_fee_ano"] == pytest.approx(old[0]["success_fee_ano"])
+    # com a meta pelo reajuste da tarifa o Fio B deixa a meta acima do repasse: success fee some
+    assert old[5]["success_fee_ano"] == pytest.approx(0.0, abs=1e-9)
+    assert comp[5]["success_fee_ano"] > 0
+
+
+def test_meta_base_success_fee_zero_na_base_todo_ano():
+    p = _p(clientes=1000, ocupacao=0.9)
+    b = dict(B_, meta=150.0, meta_reaj="base", cap=True)  # meta informada e ignorada
+    pr = am.projecao(p, 6, 0.6, A_, b, reaj_tarifa=0.06, reaj_custos=0.03, fatores_fio_b=FB_, ocupacao_ano1=0.5, degradacao=0.01)
+    for x in pr:
+        g0 = am.proposta(x["premissas"], 0.05, 10.0 * 1.03 ** x["t"], capacidade=True)["gerador_antes_sf"]
+        assert x["meta"] == pytest.approx(g0)
+        assert x["success_fee_ano"] == pytest.approx(0.0, abs=1e-6)
+    # so o desempenho acima da base paga success fee
+    alt = am.projecao(p, 3, 0.6, A_, b, fatores_fio_b=FB_[:3], perfil_inad=am.perfil_alternado(0.10, 0.05))
+    assert all(x["success_fee_ano"] > 0 for x in alt)
+
+
+def test_meta_tarifa_comportamento_anterior_e_fixa_constante():
+    p = _p()
+    m0 = _meta0(p, B_)
+    t = am.projecao(p, 5, 0.6, A_, dict(B_, meta_reaj="tarifa"), reaj_tarifa=0.07, fatores_fio_b=FB_[:5])
+    assert [x["meta"] for x in t] == pytest.approx([m0 * 1.07 ** k for k in range(5)])
+    f = am.projecao(p, 5, 0.6, A_, dict(B_, meta_reaj="fixa"), reaj_tarifa=0.07, fatores_fio_b=FB_[:5])
+    assert [x["meta"] for x in f] == pytest.approx([m0] * 5)
+    assert am.meta_ano(100.0, "comp", 1.1, 0.9, 1.0) == pytest.approx(99.0)
+    assert am.meta_ano(100.0, "base", 1.1, 0.9, 1.0, g0_base=80.0) == pytest.approx(80.0)
+    with pytest.raises(ValueError):
+        am.meta_ano(100.0, "outra", 1.0, 1.0)
+
+
+def test_pagina_reajuste_da_meta_e_cenario_v5():
+    h = _html()
+    for t in ('id="f-sfmeta"', '<option value="comp" selected>pela variação do valor compensado (tarifa compensável, inclui o Fio B)</option>',
+              '<option value="base">pelo resultado do Gerador no cenário base de cada ano</option>', '<option value="tarifa">pelo reajuste da tarifa</option>',
+              '<option value="fixa">fixa (sem reajuste)</option>', "Reajuste da meta do success fee", "versao: 5", 'id="t-sf-meta"',
+              'id="f-arr-cb"', '<option value="asset" selected>igual ao Asset (sobre o crédito do cliente)</option>',
+              '<option value="painel">convenção do painel (sobre W_I)</option>', "Base do desconto ao cliente no arrendamento"):
+        assert t in h, t
+    campos = re.search(r"var CAMPOS = \[(.*?)\];", h, re.S).group(1)
+    assert '"f-sfmeta"' in campos and '"f-arr-cb"' in campos
+    sel = re.search(r"var SEL = \{(.*?)\};", h, re.S).group(1)
+    assert '"f-sfmeta": "comp"' in sel and '"f-arr-cb": "asset"' in sel   # cenarios 1 a 4 sem o campo: novo padrao
+    # o texto da meta entra na clausula e no PDF ao gerador sem termos bloqueados
+    rx = re.compile(re.search(r"var GER_PROIBIDO = /(.+?)/i;", h).group(1), re.I)
+    meta = re.search(r"var META_TXT = \{(.*?)\};", h, re.S).group(1)
+    for k in ("comp", "base", "tarifa", "fixa"):
+        txt = re.search(k + r': "([^"]+)"', meta).group(1)
+        assert not rx.search(txt), txt
+
+
+# ---------------- base do desconto ao cliente no arrendamento
+
+TAR_ = {"tusd": 400.0, "te": 300.0, "icms": 0.18, "pc": 0.05, "flag_te": 1, "flag_tusd": 1, "fio_b_scee": 200.0}
+
+
+def _arr_alinhado(base, c=0.15):
+    import monitor_tarifas as mt
+    anos = 5
+    pfb = [mt.escalonamento_ano(2026 + t) for t in range(anos)]
+    w2 = [mt.calc_gd(400, 300, 0.18, 0.05, 1, 1, fb_ef=200.0 * x)["W"] for x in pfb]  # R$/MWh, sem reajuste
+    cons = 300.0
+    p = _p(credito=w2[0] * cons / 1000, faturada=w2[0] * cons / 1000 * (1 - c), clientes=1000)
+    ff = [w / w2[0] for w in w2]
+    pr = am.projecao_arrendamento_asset(p, anos, TAR_, pfb, cons, s=0.0, c=c, d=0.30, reaj_tarifa=0.05, reaj_custos=0.04,
+                                        q_usina_mes=1000 * cons / 1000, base_desconto=base, fatores_fio_b=ff)
+    return p, pr, pfb, ff, cons
+
+
+def test_arrendamento_desconto_igual_ao_asset():
+    p, pr, pfb, ff, cons = _arr_alinhado("asset")
+    asset = am.projecao(p, 5, 0.6, A_, B_, reaj_tarifa=0.05, reaj_custos=0.04, fatores_fio_b=ff)
+    for x, y in zip(pr, asset):
+        pt = y["premissas"]
+        assert x["desconto_cliente"] == pytest.approx(pt.credito - pt.faturada)       # C - F do Asset
+        assert x["premissas"].credito == pytest.approx(pt.credito)
+        # valor bruto igual (W_I - Fio B = credito): o cliente paga a mesma energia com desconto nos dois modelos
+        assert x["mes"]["energia_cliente"] / x["ativos"] == pytest.approx(pt.faturada)
+
+
+def test_arrendamento_desconto_convencao_do_painel():
+    import monitor_tarifas as mt
+    p, pr, pfb, ff, cons = _arr_alinhado("painel")
+    for t, x in enumerate(pr):
+        f = 1.05 ** t
+        ref = mt.calc_arrendamento(400 * f, 300 * f, 0.18, 0.05, 1, 1, 0.0, 0.30, 0.15, 200 * f * pfb[t])
+        assert x["desconto_cliente"] == pytest.approx(ref["desconto"] * cons / 1000)
+        assert x["mwh"]["margem"] == pytest.approx(ref["margem"])
+    # bases diferentes: com o painel o desconto em R$ e maior que o do Asset (W_I > valor compensado GD II)
+    _, pa, _, _, _ = _arr_alinhado("asset")
+    assert all(a["desconto_cliente"] < b["desconto_cliente"] for a, b in zip(pa, pr))
+    # mesmo pagamento ao dono; a diferenca de desconto vai para o resultado da Thopen
+    for a, b in zip(pa, pr):
+        assert a["gerador"] == pytest.approx(b["gerador"])
+        assert a["thopen"] > b["thopen"]
+
+
+def test_arrendamento_mwh_base_do_desconto():
+    a = am.arrendamento_mwh(400.0, 300.0, 0.18, 0.05, 1, 1, 0.5, 0.3, 0.2, 100.0)
+    b = am.arrendamento_mwh(400.0, 300.0, 0.18, 0.05, 1, 1, 0.5, 0.3, 0.2, 100.0, base_desconto=800.0)
+    assert a["base_desconto"] == pytest.approx(a["W_I"])
+    assert b["desconto"] == pytest.approx(160.0) and b["cliente_paga"] == pytest.approx(800.0 - 160.0)
+    assert b["cliente_paga"] == pytest.approx(b["dono"] + b["margem"])
+    assert a["margem"] == pytest.approx(a["thopen"] - a["desconto"]) and a["bruto"] == pytest.approx(a["W_I"] - a["custo_fb"])
+
+
+def test_arrendamento_igual_ao_asset_cliente_paga_o_mesmo_com_bruto_diferente():
+    # ICMS fora da TUSD compensada: valor compensado GD II (fator TUSD sem ICMS) != W_I - Fio B com impostos
+    tar = dict(TAR_, flag_tusd=0)
+    p = _p(credito=250.0, faturada=250.0 * 0.8, clientes=1000)
+    pr = am.projecao_arrendamento_asset(p, 3, tar, [0.75, 0.9, 1.0], 300.0, s=0.0, c=0.2, d=0.30, q_usina_mes=300.0,
+                                        base_desconto="asset", reaj_tarifa=0.05)
+    for x in pr:
+        pt = x["premissas"]
+        assert x["mwh"]["bruto"] != pytest.approx(x["mwh"]["W_I"] - x["mwh"]["custo_fb"])
+        assert x["mes"]["energia_cliente"] / x["ativos"] == pytest.approx(pt.faturada)
+        assert x["desconto_cliente"] == pytest.approx(pt.credito - pt.faturada)
