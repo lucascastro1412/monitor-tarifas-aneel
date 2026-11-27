@@ -343,3 +343,83 @@ def test_tarifas_asset_publicado_no_workflow():
     w = WF.read_text(encoding="utf-8")
     assert "cp tarifas_asset.json site/tarifas_asset.json" in w
     assert '"tarifas_asset.json"' in w
+
+
+# ---------------- nomes descritivos e valores por kWh
+
+def test_nome_proposta_automatico():
+    assert am.nome_proposta(0.05, 40) == "Fee fixo: 5% + R$ 40/UC"
+    assert am.nome_proposta(0.05, 30, 0.25) == "Fee reduzido + success fee: 5% + R$ 30/UC + 25% do excedente"
+    assert am.nome_proposta(0.025, 12.5) == "Fee fixo: 2,5% + R$ 12,50/UC"
+    assert am.nome_proposta(0.0, 1200) == "Fee fixo: R$ 1.200/UC"
+    assert am.nome_proposta(0.08) == "Fee fixo: 8%"
+    assert am.nome_proposta() == "Fee fixo: sem fee"
+    assert "—" not in am.nome_proposta(0.05, 30, 0.2) and "–" not in am.nome_proposta(0.05, 30, 0.2)
+
+
+@pytest.mark.parametrize("cen", ["hoje", "a", "b"])
+def test_valores_kwh_consistentes_com_cliente(cen):
+    p = _p()
+    r = am.hoje(p, 0.6) if cen == "hoje" else am.proposta(p, 0.05, 20, 0.2 if cen == "b" else 0, meta=150)
+    v = am.valores_kwh(p, r, consumo=400.0, tarifa_cheia=0.95)
+    for k, x in v["cliente"].items():
+        if x is None:
+            assert v["kwh"][k] is None
+        else:
+            assert v["kwh"][k] * 400 == pytest.approx(x), k
+    assert v["kwh"]["credito"] == pytest.approx(0.75)                 # 300 / 400
+    assert v["kwh"]["faturada"] == pytest.approx(0.6375)              # 255 / 400
+    assert v["kwh"]["tarifa_cheia"] == pytest.approx(0.95)
+    assert v["cliente"]["economia"] == pytest.approx(45.0)
+    assert v["desconto"] == pytest.approx(0.15)
+    assert v["cliente"]["economia_cheia"] == pytest.approx(380 - 305)
+    assert v["economia_cheia_pct"] == pytest.approx(75 / 380)
+    # split de cada R$ 1 arrecadado fecha em 1 e em R$ fecha na arrecadacao
+    s = v["split"]
+    assert sum(s.values()) == pytest.approx(1.0)
+    arr = am.arrecadacao(p)
+    assert sum(x * arr for x in s.values()) == pytest.approx(arr)
+    assert s["vazamento"] * arr == pytest.approx(5.0)
+    # Thopen = fee total (ou sobra da cascata no Hoje)
+    assert v["cliente"]["thopen"] == pytest.approx(r["receita"])
+    if cen == "hoje":
+        assert v["cliente"]["fee_pct"] is None and v["cliente"]["success_fee"] is None
+        assert v["cliente"]["thopen"] == pytest.approx(34.5)
+    else:
+        c = v["cliente"]
+        assert c["fee_pct"] + c["fee_fixo"] + c["success_fee"] == pytest.approx(c["thopen"])
+
+
+def test_valores_kwh_sem_consumo():
+    v = am.valores_kwh(_p(), am.proposta(_p(), 0.05, 20))
+    assert v["kwh"] is None and v["cliente"]["tarifa_cheia"] is None and v["economia_cheia_pct"] is None
+    assert v["cliente"]["gerador"] == pytest.approx(274.5 - 50 - 10 - 32.75)
+
+
+def test_pagina_nomes_e_bloco_kwh():
+    h = _html()
+    for t in ('id="f-nome-a"', 'id="f-nome-b"', "Nome da proposta A", "Nome da proposta B", "Tarifa e valores por kWh",
+              'id="t-kwh"', 'id="g-kwh"', "Fee reduzido + success fee", "Valores por kWh", "Fee de gestão Thopen",
+              '"f-nome-a"', '"f-nome-b"'):
+        assert t in h, t
+    # nomes entram no cenario salvo; versao nova, arquivos antigos (sem os nomes) continuam carregando
+    assert re.search(r'CAMPOS = \[[^\]]*"f-nome-a", "f-nome-b"', h)
+    assert "versao: 3" in h
+
+
+def test_pdf_gerador_lista_branca_sem_termos_internos():
+    h = _html()
+    rx = re.compile(re.search(r"var GER_PROIBIDO = /(.+?)/i;", h).group(1), re.I)
+    for termo in ("receita da Thopen", "resultado da Thopen", "impostos", "margem", "break-even", "ocupação de equilíbrio"):
+        assert rx.search(termo), termo
+    for termo in ("Fee de gestão Thopen", "Tarifa que o cliente paga pela energia", "Tarifa cheia com tributos", "Repasse ao Gerador"):
+        assert not rx.search(termo), termo
+    campos = re.search(r"var GER_CAMPOS = \[(.*?)\];", h, re.S).group(1)
+    assert '"kwh"' in campos
+    for interno in ("thopen", "impostos", "custo", "ga", "breakEven", "vale", "objecoes", "split"):
+        assert '"' + interno + '"' not in campos, interno
+    # textos fixos do bloco ao gerador (sem comentarios) nao contem termos bloqueados
+    bloco = h[h.index("// >>> PROPOSTA AO GERADOR"):h.index("// <<< PROPOSTA AO GERADOR")]
+    bloco = "\n".join(l for l in bloco.splitlines() if not l.strip().startswith("//"))
+    for s in re.findall(r'"([^"\\]{3,})"', bloco):
+        assert not rx.search(s), s

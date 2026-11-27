@@ -212,3 +212,60 @@ def cenario_prazo(proj: list[dict], prazo: int, taxa: Optional[float] = None) ->
             fl = [linha[k][v] for linha in proj[:prazo]]
             res[k][v] = {"total": sum(fl), "vpl": vpl(fl, taxa) if taxa is not None else None}
     return res
+
+
+# ---------------------------------------------------------------- nomes das propostas e valores por kWh
+
+def _num_br(v: float, casas: int) -> str:
+    s = f"{v:,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return s
+
+
+def fmt_pct(v: float) -> str:
+    """Fracao em % com ate 2 casas, sem zeros a direita (0,05 -> '5%'; 0,025 -> '2,5%')."""
+    s = _num_br(round(v * 100, 2), 2)
+    if "," in s:
+        s = s.rstrip("0").rstrip(",")
+    return s + "%"
+
+
+def fmt_brl_curto(v: float) -> str:
+    """R$ sem centavos quando inteiro (40 -> 'R$ 40'; 40,5 -> 'R$ 40,50'; 1200 -> 'R$ 1.200')."""
+    r = round(v, 2)
+    return "R$ " + (_num_br(r, 0) if abs(r - round(r)) < 1e-9 else _num_br(r, 2))
+
+
+def nome_proposta(pct: float = 0.0, fixo: float = 0.0, sigma: float = 0.0) -> str:
+    """Nome automatico pela estrutura de fee: 'Fee fixo: 5% + R$ 40/UC' ou
+    'Fee reduzido + success fee: 5% + R$ 30/UC + 25% do excedente'."""
+    partes = []
+    if pct:
+        partes.append(fmt_pct(pct))
+    if fixo:
+        partes.append(fmt_brl_curto(fixo) + "/UC")
+    if sigma:
+        partes.append(fmt_pct(sigma) + " do excedente")
+        return "Fee reduzido + success fee: " + (" + ".join(partes))
+    return "Fee fixo: " + (" + ".join(partes) if partes else "sem fee")
+
+
+def valores_kwh(p: Premissas, r: dict, consumo: Optional[float] = None, tarifa_cheia: Optional[float] = None) -> dict:
+    """Valores por cliente/mes e por kWh de um cenario (r = proposta() ou hoje()).
+    Tarifa compensavel = credito / consumo; tarifa do cliente = energia faturada com desconto / consumo; Thopen = fee total
+    (no Hoje, a sobra da cascata); split = fracao de cada R$ 1 arrecadado (soma 1)."""
+    eh_hoje = "fee_pct" not in r
+    cli = {
+        "tarifa_cheia": tarifa_cheia * consumo if (tarifa_cheia is not None and consumo) else None,
+        "credito": p.credito, "faturada": p.faturada, "economia": p.credito - p.faturada,
+        "custo_total": p.faturada + p.fatura_dist,
+        "economia_cheia": tarifa_cheia * consumo - (p.faturada + p.fatura_dist) if (tarifa_cheia is not None and consumo) else None,
+        "fee_pct": None if eh_hoje else r["fee_pct"], "fee_fixo": None if eh_hoje else r["fee_fixo"],
+        "success_fee": None if eh_hoje else r["success_fee"], "thopen": r["receita"], "gerador": r["gerador"],
+        "fatura_dist": p.fatura_dist, "canal": p.recorrencia_canal, "arrecadacao": r["arrecadacao"],
+    }
+    kwh = {k: (v / consumo if v is not None else None) for k, v in cli.items()} if consumo else None
+    arr = r["arrecadacao"]
+    split = {"gerador": r["gerador"] / arr, "thopen": r["receita"] / arr, "canal": p.recorrencia_canal / arr,
+             "distribuidora": p.fatura_dist * (1.0 - p.inadimplencia) / arr, "vazamento": vazamento(p) / arr} if arr else None
+    return {"cliente": cli, "kwh": kwh, "split": split, "desconto": p.desconto,
+            "economia_cheia_pct": (cli["economia_cheia"] / cli["tarifa_cheia"]) if cli["tarifa_cheia"] else None}
