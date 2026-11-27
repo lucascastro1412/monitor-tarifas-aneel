@@ -87,9 +87,12 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
     <a href="#s-kwh">Valores por kWh</a>
     <a href="#s-quadro">Quadro</a>
     <a href="#s-be">Break-even</a>
+    <a href="#s-reverso">Cálculo reverso</a>
     <a href="#s-sens">Sensibilidade</a>
     <a href="#s-proj">Projeção</a>
     <a href="#s-prazos">Cenários de prazo</a>
+    <a href="#s-sf">Success fee</a>
+    <a href="#s-arr">Arrendamento</a>
     <a href="#s-vale">Vale a pena?</a>
     <a href="#s-clausulas">Cláusulas</a>
     <a href="#s-objecoes">Objeções</a>
@@ -150,14 +153,18 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
       <label>Nome da proposta A<input type="text" id="f-nome-a" class="largo" value="" autocomplete="off"><span class="ajuda">vazio = automático pela estrutura de fee</span></label>
       <label>Fee (% da energia faturada com desconto)<input type="text" id="f-pa" inputmode="decimal" value=""></label>
       <label>Fee fixo (R$/UC/mês)<input type="text" id="f-fa" inputmode="decimal" value=""></label>
+      <label>Base do fee fixo<select id="f-bfa" class="largo"><option value="ativos" selected>clientes ativos (padrão)</option><option value="cap">capacidade da usina (clientes contratáveis)</option></select><span class="ajuda" id="h-bfa"></span></label>
     </div></fieldset>
     <fieldset><legend>Proposta B</legend><div class="campos">
       <label>Nome da proposta B<input type="text" id="f-nome-b" class="largo" value="" autocomplete="off"><span class="ajuda">vazio = automático pela estrutura de fee</span></label>
       <label>Fee piso (% da energia faturada com desconto)<input type="text" id="f-pb" inputmode="decimal" value=""></label>
       <label>Fee fixo (R$/UC/mês)<input type="text" id="f-fb" inputmode="decimal" value=""></label>
+      <label>Base do fee fixo<select id="f-bfb" class="largo"><option value="ativos" selected>clientes ativos (padrão)</option><option value="cap">capacidade da usina (clientes contratáveis)</option></select><span class="ajuda" id="h-bfb"></span></label>
       <label>Success fee (% do excedente)<input type="text" id="f-sig" inputmode="decimal" value=""><span class="ajuda">sobre o resultado do Gerador acima da meta</span></label>
       <label>Meta do Gerador (R$/cliente/mês)<input type="text" id="f-meta" inputmode="decimal" value=""></label>
       <label class="chk"><input type="checkbox" id="f-meta-base" checked> usar resultado do Gerador no cenário base</label>
+      <label>Apuração do success fee<select id="f-sfmodo" class="largo"><option value="simples" selected>mensal simples</option><option value="carry">com saldo acumulado (carry-forward)</option></select><span class="ajuda">saldo acumulado: o déficit abaixo da meta é compensado antes de novo success fee</span></label>
+      <label class="chk"><input type="checkbox" id="f-sfzera"> zerar saldo a cada ano</label>
     </div></fieldset>
     <fieldset><legend>Termos de contrato (opcionais)</legend><div class="campos">
       <label>Desconto máximo ao cliente (%)<input type="text" id="f-descmax" inputmode="decimal" value=""></label>
@@ -173,6 +180,7 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
       <label>Reajuste do fee fixo, recorrência e custos (% a.a.)<input type="text" id="f-reajc" inputmode="decimal" value=""><span class="ajuda" id="h-reajc">vazio = IPCA 12 meses</span></label>
       <label>Taxa de desconto para VPL (% a.a.)<input type="text" id="f-taxa" inputmode="decimal" value=""><span class="ajuda">vazio = sem VPL</span></label>
       <label>Ocupação no ano 1 (%)<input type="text" id="f-ocup1" inputmode="decimal" value=""><span class="ajuda">ramp-up; vazio = ocupação base</span></label>
+      <label>Inadimplência mês a mês (%)<input type="text" id="f-sfperfil" class="largo" value="" placeholder="ex.: 8;12;10;9;11;10;8;12;10;9;11;10"><span class="ajuda">opcional: 12 valores com ponto e vírgula, repetidos todo ano; vazio = inadimplência base em todos os meses</span></label>
     </div></fieldset>
   </div>
   <div id="erros" class="erro" style="margin-top:12px"></div>
@@ -180,7 +188,9 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
     Gerador = arrecadação - fatura da distribuidora - recorrência do canal - fee - success fee; resultado da Thopen = receita x (1 - impostos) - custo de operação - G&amp;A / ocupação.
     O fee é sênior na cascata e incide sobre a energia faturada com desconto, então não varia com a inadimplência.
     Projeção por ano: tarifa compensável = base x (1 + reajuste da tarifa)^ano, menos o aumento do Fio B efetivo (GD II e GD III, Lei 14.300: 2026 60%, 2027 75%, 2028 90%, 2029 em diante 100%);
-    fatura da distribuidora e meta do success fee seguem o reajuste da tarifa; fee fixo, recorrência do canal, custo de operação e G&amp;A seguem o reajuste dos custos; capacidade x (1 - degradação)^ano.</div>
+    fatura da distribuidora e meta do success fee seguem o reajuste da tarifa; fee fixo, recorrência do canal, custo de operação e G&amp;A seguem o reajuste dos custos; capacidade x (1 - degradação)^ano.
+    Fee fixo sobre a capacidade: devido sobre os clientes contratáveis da usina, então por cliente ativo = fee fixo / ocupação (o Gerador paga também as vagas).
+    Cada ano da projeção simula 12 meses com a inadimplência mês a mês; o success fee é apurado mês a mês (simples ou com saldo acumulado).</div>
   <div id="tar-nota" class="aviso" style="display:none"></div>
 </section>
 
@@ -216,8 +226,26 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
   <div class="tab"><table id="t-ocstar"></table></div>
 </section>
 
+<section id="s-reverso" class="card">
+  <h2>5. Cálculo reverso do fee (uso interno)</h2>
+  <p class="mut">Fee necessário para a margem desejada da Thopen: fee = (margem + custo de operação + G&amp;A / ocupação) / (1 - impostos); fixo = fee - % x energia faturada com desconto; % = (fee - fixo) / energia faturada com desconto. Na proposta B, sobre o piso (sem success fee).</p>
+  <div class="campos">
+    <label>Margem desejada da Thopen<input type="text" id="f-rv-m" inputmode="decimal" value=""><span class="ajuda">vazio = 0 (empate)</span></label>
+    <label>Unidade da margem<select id="f-rv-unid"><option value="rs" selected>R$ por cliente ativo por mês</option><option value="pct">% do fee</option></select></label>
+    <label>Ocupação para o cálculo (%)<input type="text" id="f-rv-ocup" inputmode="decimal" value=""><span class="ajuda" id="h-rv-ocup">vazio = ocupação base</span></label>
+  </div>
+  <div class="tab" style="margin-top:10px"><table id="t-reverso"></table></div>
+  <div class="barra" style="margin-top:10px">
+    <button class="btn" id="b-rv-fa" type="button">Aplicar fixo à proposta A</button>
+    <button class="btn" id="b-rv-pa" type="button">Aplicar % à proposta A</button>
+    <button class="btn" id="b-rv-fb" type="button">Aplicar fixo à proposta B</button>
+    <button class="btn" id="b-rv-pb" type="button">Aplicar % à proposta B</button>
+  </div>
+  <div id="rv-nota" class="nota"></div>
+</section>
+
 <section id="s-sens" class="card">
-  <h2>5. Sensibilidade</h2>
+  <h2>6. Sensibilidade</h2>
   <h3>Inadimplência (ocupação base)</h3>
   <div class="tab"><table id="t-sens-i"></table></div>
   <h3>Ocupação (inadimplência base)</h3>
@@ -230,7 +258,7 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
 </section>
 
 <section id="s-proj" class="card">
-  <h2>6. Projeção por ano</h2>
+  <h2>7. Projeção por ano</h2>
   <div id="proj-info" class="mut"></div>
   <div class="tab"><table id="t-proj"></table></div>
   <h3>Gerador e Thopen por ano (R$/ano)</h3>
@@ -238,7 +266,7 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
 </section>
 
 <section id="s-prazos" class="card">
-  <h2>7. Cenários por prazo do contrato</h2>
+  <h2>8. Cenários por prazo do contrato</h2>
   <h3>Gerador</h3>
   <div class="tab"><table id="t-prazo-g"></table></div>
   <h3>Thopen</h3>
@@ -246,24 +274,63 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
   <div id="prazo-nota" class="nota"></div>
 </section>
 
+<section id="s-sf" class="card">
+  <h2>9. Apuração do success fee (proposta B)</h2>
+  <div class="campos">
+    <label>Variação do exemplo alternado (p.p.)<input type="text" id="f-sfpp" inputmode="decimal" value=""><span class="ajuda">vazio = 5 p.p.: meses com base + X e base - X, alternando</span></label>
+  </div>
+  <div id="sf-info" class="nota"></div>
+  <h3>Success fee por ano: mensal simples x saldo acumulado (exemplo alternado)</h3>
+  <div class="tab"><table id="t-sf-alt"></table></div>
+  <h3>Apuração mês a mês no cenário atual (ano 1)</h3>
+  <div class="tab"><table id="t-sf-mes"></table></div>
+</section>
+
+<section id="s-arr" class="card">
+  <h2>10. Comparação com o arrendamento (uso interno)</h2>
+  <p class="mut">Mesma conta do Arrendamento do painel (deságio sobre a tarifa sem impostos, benefício fiscal dividido pelo VB do dono, Fio B pago pelo dono), na mesma linha do tempo da projeção.</p>
+  <div class="campos">
+    <label>Base do arrendamento<select id="f-arr-modo"><option value="d" selected>deságio (%)</option><option value="p">preço ao dono (R$/kWh, líquido do Fio B)</option></select></label>
+    <label id="l-arr-d">Deságio (%)<input type="text" id="f-arr-d" inputmode="decimal" value=""><span class="ajuda">vazio = 30% (padrão do painel)</span></label>
+    <label id="l-arr-p">Preço ao dono (R$/kWh)<input type="text" id="f-arr-p" inputmode="decimal" value=""><span class="ajuda">reajustado pela tarifa a cada ano</span></label>
+    <label>VB do dono (%)<input type="text" id="f-arr-s" inputmode="decimal" value=""><span class="ajuda">vazio = 50% (padrão do painel)</span></label>
+    <label>Desconto ao cliente (% do valor compensado)<input type="text" id="f-arr-c" inputmode="decimal" value=""><span class="ajuda" id="h-arr-c">vazio = desconto das premissas</span></label>
+    <label>Custo do Fio B<select id="f-arr-fb"><option value="com" selected>com impostos (padrão)</option><option value="sem">sem impostos</option></select></label>
+  </div>
+  <div id="arr-aviso"></div>
+  <div id="arr-saida">
+    <h3>Arrendamento por MWh compensado (ano de início)</h3>
+    <div class="tab"><table id="t-arr-mwh"></table></div>
+    <h3>Arrendamento por ano</h3>
+    <div class="tab"><table id="t-arr-ano"></table></div>
+    <h3>Lado a lado: Hoje, propostas e arrendamento</h3>
+    <div class="tab"><table id="t-arr-comp"></table></div>
+    <h3>Quem fica com cada risco</h3>
+    <div class="tab"><table id="t-arr-risco"></table></div>
+    <h3>Melhor modelo para esta usina</h3>
+    <div id="arr-veredito" class="veredito"></div>
+    <div id="arr-nota" class="nota"></div>
+  </div>
+</section>
+
 <section id="s-vale" class="card">
-  <h2>8. Vale a pena? (análise interna)</h2>
+  <h2>11. Vale a pena? (análise interna)</h2>
   <div id="vale" class="veredito"></div>
 </section>
 
 <section id="s-clausulas" class="card">
-  <h2>9. Cláusulas contratuais essenciais</h2>
+  <h2>12. Cláusulas contratuais essenciais</h2>
   <div id="clausulas" class="clausulas"></div>
 </section>
 
 <section id="s-objecoes" class="card">
-  <h2>10. Objeções do Gerador e respostas</h2>
+  <h2>13. Objeções do Gerador e respostas</h2>
   <div id="objecoes" class="objecoes"></div>
 </section>
 </div>
 
 <section id="s-exp" class="card">
-  <h2>11. Exportar</h2>
+  <h2>14. Exportar</h2>
   <div class="barra">
     <button class="btn pri" id="b-pdf-ger" type="button" title="Só estrutura de fee, resultado do Gerador, sensibilidade do Gerador, comparação com hoje e cláusulas">PDF proposta ao gerador</button>
     <button class="btn" id="b-pdf-int" type="button" title="Tudo, marcado como uso interno">PDF análise interna</button>
@@ -294,8 +361,12 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
   var CAMPOS = ["f-usina", "f-dist", "f-n", "f-data", "f-consumo", "f-tarifa", "f-credito", "f-desc", "f-fat", "f-df", "f-inad", "f-canal",
     "f-op", "f-ga", "f-imp", "f-ocup", "f-tr", "f-pa", "f-fa", "f-pb", "f-fb", "f-sig", "f-meta", "f-descmax", "f-sla1", "f-sla2", "f-regua", "f-ocmin",
     "f-dist-sel", "f-gd", "f-ano", "f-base", "f-pot", "f-unid", "f-prod", "f-ger", "f-pcomp", "f-degr",
-    "f-prazo", "f-prazos", "f-reaj", "f-reajc", "f-taxa", "f-ocup1", "f-nome-a", "f-nome-b"];
-  var SEL = {"f-dist-sel": "", "f-gd": "II", "f-base": "c", "f-unid": "kwp"};  // selects e o valor padrao (cenarios antigos nao tem estes campos)
+    "f-prazo", "f-prazos", "f-reaj", "f-reajc", "f-taxa", "f-ocup1", "f-nome-a", "f-nome-b",
+    "f-bfa", "f-bfb", "f-sfmodo", "f-sfperfil", "f-sfpp", "f-rv-m", "f-rv-unid", "f-rv-ocup",
+    "f-arr-modo", "f-arr-d", "f-arr-p", "f-arr-s", "f-arr-c", "f-arr-fb"];
+  // selects e o valor padrao: cenarios antigos (versao: 1 a versao: 3) nao tem os campos novos e carregam com estes padroes
+  var SEL = {"f-dist-sel": "", "f-gd": "II", "f-base": "c", "f-unid": "kwp", "f-bfa": "ativos", "f-bfb": "ativos", "f-sfmodo": "simples",
+    "f-rv-unid": "rs", "f-arr-modo": "d", "f-arr-fb": "com"};
   var ROT = {"f-usina": "Usina / gerador", "f-dist": "Distribuidora", "f-n": "Capacidade (clientes)", "f-data": "Data",
     "f-consumo": "Consumo médio (kWh/cliente/mês)", "f-tarifa": "Tarifa compensável (R$/kWh)", "f-credito": "Crédito de energia compensada bruto",
     "f-desc": "Desconto ao cliente", "f-fat": "Energia faturada com desconto", "f-df": "Fatura da distribuidora repassada ao cliente",
@@ -308,9 +379,14 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
     "f-ger": "Geração média direta (MWh/mês)", "f-pcomp": "Geração compensada", "f-degr": "Degradação anual", "f-prazo": "Prazo do contrato (anos)",
     "f-prazos": "Prazos para comparar", "f-reaj": "Reajuste anual da tarifa", "f-reajc": "Reajuste do fee fixo, recorrência e custos",
     "f-taxa": "Taxa de desconto para VPL", "f-ocup1": "Ocupação no ano 1",
-    "f-nome-a": "Nome da proposta A", "f-nome-b": "Nome da proposta B"};
+    "f-nome-a": "Nome da proposta A", "f-nome-b": "Nome da proposta B",
+    "f-bfa": "Proposta A: base do fee fixo", "f-bfb": "Proposta B: base do fee fixo", "f-sfmodo": "Apuração do success fee",
+    "f-sfperfil": "Inadimplência mês a mês (12 valores em %)", "f-sfpp": "Variação do exemplo alternado (p.p.)",
+    "f-rv-m": "Cálculo reverso: margem desejada", "f-rv-unid": "Cálculo reverso: unidade da margem", "f-rv-ocup": "Cálculo reverso: ocupação",
+    "f-arr-modo": "Arrendamento: base", "f-arr-d": "Arrendamento: deságio", "f-arr-p": "Arrendamento: preço ao dono (R$/kWh)",
+    "f-arr-s": "Arrendamento: VB do dono", "f-arr-c": "Arrendamento: desconto ao cliente", "f-arr-fb": "Arrendamento: custo do Fio B"};
   var PCT = {"f-desc": 1, "f-inad": 1, "f-imp": 1, "f-ocup": 1, "f-tr": 1, "f-pa": 1, "f-pb": 1, "f-sig": 1, "f-descmax": 1, "f-ocmin": 1,
-    "f-pcomp": 1, "f-degr": 1, "f-reaj": 1, "f-reajc": 1, "f-taxa": 1, "f-ocup1": 1};
+    "f-pcomp": 1, "f-degr": 1, "f-reaj": 1, "f-reajc": 1, "f-taxa": 1, "f-ocup1": 1, "f-sfpp": 1, "f-rv-ocup": 1, "f-arr-d": 1, "f-arr-s": 1, "f-arr-c": 1};
 
   // nome descritivo da proposta pela estrutura de fee (espelho de nome_proposta em asset_management.py)
   function brlCurto(v) { var r = Math.round(v * 100) / 100; return "R$ " + (Math.abs(r - Math.round(r)) < 1e-9 ? f0.format(r) : f2.format(r)); }
@@ -335,7 +411,7 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
   function estado() {
     var o = {}; CAMPOS.forEach(function (id) { o[id] = $(id).value; });
     if (!J && pendDist) o["f-dist-sel"] = pendDist;
-    o["f-meta-base"] = $("f-meta-base").checked; return o;
+    o["f-meta-base"] = $("f-meta-base").checked; o["f-sfzera"] = $("f-sfzera").checked; return o;
   }
   function aplica(o) {
     CAMPOS.forEach(function (id) {
@@ -347,6 +423,7 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
       } else $(id).value = v;
     });
     $("f-meta-base").checked = !o || o["f-meta-base"] !== false;
+    $("f-sfzera").checked = !!(o && o["f-sfzera"]);
   }
   function grava() { try { localStorage.setItem(CHAVE, JSON.stringify(estado())); } catch (e) {} }
   function msg(t) { var e = $("msg"); e.textContent = t || ""; if (t) setTimeout(function () { if (e.textContent === t) e.textContent = ""; }, 9000); }
@@ -361,10 +438,12 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
       r.gerador = c.tau * P.C; r.g0 = r.gerador;
       r.receita = arr - P.Df - P.Rc - r.gerador;
       r.imp = r.receita > 0 ? r.receita * P.t : 0;
-    } else {
-      r.feePct = c.p * P.F; r.feeFixo = c.f; r.fee = r.feePct + c.f;
+    } else {  // fee fixo sobre a capacidade: devido sobre os clientes contrataveis, por cliente ativo = fixo / ocupacao
+      var fEf = c.cap ? c.f / w : c.f;
+      r.feePct = c.p * P.F; r.feeFixo = fEf; r.fee = r.feePct + fEf;
       r.g0 = arr - P.Df - P.Rc - r.fee;
-      if (c.sig != null) { r.exc = Math.max(0, r.g0 - c.meta); r.sf = c.sig * r.exc; }
+      if (ov && ov.sf != null) { r.exc = null; r.sf = ov.sf; }  // success fee apurado com saldo acumulado
+      else if (c.sig != null) { r.exc = Math.max(0, r.g0 - c.meta); r.sf = c.sig * r.exc; }
       r.gerador = r.g0 - (r.sf || 0);
       r.receita = r.fee + (r.sf || 0);
       r.imp = r.receita * P.t;
@@ -374,7 +453,22 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
     return r;
   }
   function rEquil(P, w) { return (P.o + P.g / w) / (1 - P.t); }
-  function ocStar(P, r) { var den = r.receita - r.imp - P.o; return den > 0 ? P.g / den : null; }
+  // ocupacao de equilibrio (espelho de ocupacao_equilibrio_fee): resultado por cliente ativo = a + b / ocupacao
+  function ocEq(P, c, r) {
+    var a, b;
+    if (c.k === "hoje") { a = r.receita - r.imp - P.o; b = -P.g; }
+    else { a = (r.receita - (c.cap ? r.feeFixo : 0)) * (1 - P.t) - P.o; b = (c.cap ? c.f : 0) * (1 - P.t) - P.g; }
+    if (b >= 0) return a >= 0 ? {t: "sempre", w: null} : {t: "ate", w: b / -a};
+    if (a <= 0) return {t: "nunca", w: null};
+    return {t: "acima", w: -b / a};
+  }
+  function ocsTxt(r) {
+    var e = r.oe || {t: "nunca"};
+    if (e.t === "sempre") return "sempre positivo (fee fixo sobre a capacidade cobre o G&A)";
+    if (e.t === "nunca") return "não fecha em nenhuma ocupação";
+    if (e.t === "ate") return "positivo só abaixo de " + pc(e.w) + " (a parte variável do fee não cobre o custo de operação)";
+    return pc(e.w) + (e.w > 1 ? " (acima de 100%: não fecha nem com a usina cheia)" : "");
+  }
 
   function leitura() {
     var falta = [], inval = [];
@@ -415,8 +509,30 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
     if (!(X.deg >= 0 && X.deg < 1)) reg.push("Degradação anual deve estar entre 0% e 100%.");
     if (X.taxa != null && !(X.taxa > -1)) reg.push("Taxa de desconto deve ser maior que -100%.");
     if (!(X.rt > -1) || !(X.rc > -1)) reg.push("Reajustes devem ser maiores que -100%.");
-    var A = {k: "a", nome: txt("f-nome-a") || nomeAuto(pa || 0, fa || 0, 0), auto: !txt("f-nome-a"), p: pa || 0, f: fa || 0};
-    var B = {k: "b", nome: txt("f-nome-b") || nomeAuto(pb || 0, fb || 0, sig || 0), auto: !txt("f-nome-b"), p: pb || 0, f: fb || 0, sig: sig || 0, meta: meta, metaBase: $("f-meta-base").checked};
+    // inadimplencia mes a mes (12 valores) e exemplo alternado do success fee
+    X.perfil = null;
+    if (txt("f-sfperfil")) {
+      var pf = txt("f-sfperfil").split(/;/).map(function (s) { return lerNum(s); });
+      if (pf.length !== 12 || pf.some(function (v) { return v == null || isNaN(v) || v < 0 || v >= 100; })) inval.push("f-sfperfil");
+      else X.perfil = pf.map(function (v) { return v / 100; });
+    }
+    X.sfpp = opc("f-sfpp"); X.sfppPad = X.sfpp == null; if (X.sfpp == null) X.sfpp = 0.05;
+    if (!(X.sfpp >= 0 && X.sfpp < 1)) reg.push("Variação do exemplo alternado deve estar entre 0 e 100 p.p.");
+    // calculo reverso do fee
+    var rvm = lerNum($("f-rv-m").value);
+    if (rvm != null && isNaN(rvm)) { inval.push("f-rv-m"); rvm = null; }
+    X.rvU = $("f-rv-unid").value; X.rvM = rvm == null ? 0 : (X.rvU === "pct" ? rvm / 100 : rvm);
+    X.rvW = opc("f-rv-ocup"); X.rvWPad = X.rvW == null; if (X.rvW == null) X.rvW = P.w;
+    if (!(X.rvW > 0 && X.rvW <= 1)) reg.push("Cálculo reverso: ocupação deve estar entre 0% e 100%.");
+    // arrendamento (padroes do painel: desagio 30%, VB 50%; desconto vazio = desconto das premissas)
+    X.arr = {modo: $("f-arr-modo").value, d: opc("f-arr-d"), p: opc("f-arr-p"), s: opc("f-arr-s"), c: opc("f-arr-c"), fbCom: $("f-arr-fb").value !== "sem"};
+    X.arr.dPad = X.arr.d == null; X.arr.sPad = X.arr.s == null; X.arr.cPad = X.arr.c == null;
+    if (X.arr.d == null) X.arr.d = 0.30;
+    if (X.arr.s == null) X.arr.s = 0.50;
+    if (X.arr.c == null) X.arr.c = P.d != null && isFinite(P.d) ? P.d : 0;
+    var A = {k: "a", nome: txt("f-nome-a") || nomeAuto(pa || 0, fa || 0, 0), auto: !txt("f-nome-a"), p: pa || 0, f: fa || 0, cap: $("f-bfa").value === "cap"};
+    var B = {k: "b", nome: txt("f-nome-b") || nomeAuto(pb || 0, fb || 0, sig || 0), auto: !txt("f-nome-b"), p: pb || 0, f: fb || 0, sig: sig || 0, meta: meta, metaBase: $("f-meta-base").checked,
+      cap: $("f-bfb").value === "cap", carry: $("f-sfmodo").value === "carry", zerar: $("f-sfzera").checked};
     if (A.nome === B.nome) { A.nome += " (proposta A)"; B.nome += " (proposta B)"; }
     return {P: P, X: X, falta: falta, inval: inval, reg: reg, A: A, B: B};
   }
@@ -437,11 +553,11 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
     }
     e.style.display = "none"; $("saida").style.display = "";
     var H = {k: "hoje", nome: "Hoje (Take Rate " + pcc(P.tau) + ")", tau: P.tau}, A = L.A, B = L.B;
-    if (B.metaBase) B.meta = cascata(P, {k: "b", p: B.p, f: B.f}).g0;
+    if (B.metaBase) B.meta = cascata(P, {k: "b", p: B.p, f: B.f, cap: B.cap}).g0;
     var cens = [H, A, B];
     NM = cens.map(function (c) { return c.nome; });
     var R = cens.map(function (c) { return cascata(P, c); });
-    R.forEach(function (r, j) { r.varG = j ? r.gerador / R[0].gerador - 1 : null; r.ocs = ocStar(P, r); });
+    R.forEach(function (r, j) { r.varG = j ? r.gerador / R[0].gerador - 1 : null; r.oe = ocEq(P, cens[j], r); r.ocs = r.oe.t === "acima" ? r.oe.w : null; });
     var inads = uniq([0, 0.05, 0.10, 0.15, 0.20, 0.25, P.i]), ocups = uniq([0.6, 0.7, 0.8, 0.9, 1, P.w]);
     var SI = inads.map(function (i) { return cens.map(function (c) { return cascata(P, c, {i: i}); }); });
     var SW = ocups.map(function (w) { return cens.map(function (c) { return cascata(P, c, {w: w}); }); });
@@ -452,6 +568,9 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
     U.cons = ok(kc) && kc > 0 ? kc : null; U.vc = U.tar && U.tar.e && U.tar.e.v_kwh != null ? U.tar.e.v_kwh : null;
     U.kwh = R.map(function (r) { return valoresKwh(P, r, U.cons, U.vc); });
     U.proj = projeta(U);
+    U.sfAlt = sfAlternado(U);
+    U.rv = reverso(U);
+    U.arr = comparaArr(U);
     U.vale = vale(U); U.claus = clausulas(U); U.obj = objecoes(U);
     render(U);
   }
@@ -566,16 +685,45 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
     }
     return {ok: temFb, ref: ref, anos: out};
   }
-  function projeta(U) {
+  function media(rs) {  // media mensal dos campos numericos (espelho de _media)
+    var o = {};
+    Object.keys(rs[0]).forEach(function (k) {
+      if (typeof rs[0][k] !== "number") { o[k] = rs[0][k]; return; }
+      var s = 0; rs.forEach(function (r) { s += r[k]; }); o[k] = s / rs.length;
+    });
+    return o;
+  }
+  // Projecao (espelho de projecao em asset_management.py): cada ano simula 12 meses com a inadimplencia mes a mes;
+  // o success fee de B e apurado mes a mes, simples ou com saldo acumulado (op: perfil, carry e zerar no lugar dos campos)
+  function projeta(U, op) {
+    op = op || {};
     var P = U.P, X = U.X, A = U.cens[1], B = U.cens[2], FB = fatoresFioB(U);
-    var dd = 1 - P.F / P.C, anos = [], ac = [[0, 0], [0, 0], [0, 0]];
+    var perfil = op.perfil !== undefined ? op.perfil : X.perfil, carry = op.carry != null ? op.carry : B.carry, zerar = op.zerar != null ? op.zerar : B.zerar;
+    var dd = 1 - P.F / P.C, anos = [], ac = [[0, 0], [0, 0], [0, 0]], saldo = 0;
     for (var t = 0; t < X.H; t++) {
       var ft = Math.pow(1 + X.rt, t), fc = Math.pow(1 + X.rc, t), fb = FB.anos[t], C = P.C * fb.f * ft;
       var Pt = Object.assign({}, P, {C: C, F: C * (1 - dd), Df: P.Df * ft, Rc: P.Rc * fc, o: P.o * fc, g: P.g * fc,
         w: t === 0 && X.w1 != null ? X.w1 : P.w, N: P.N ? Math.floor(P.N * Math.pow(1 - X.deg, t) + 1e-9) : null});
-      var cs = [{k: "hoje", tau: P.tau}, {k: "a", p: A.p, f: A.f * fc}, {k: "b", p: B.p, f: B.f * fc, sig: B.sig, meta: (B.meta || 0) * ft}];
-      var R = cs.map(function (c) { return cascata(Pt, c); }), at = Pt.N ? Pt.N * Pt.w : 1;
-      var lin = {t: t, ano: X.ano + t, pfb: fb.pfb, fbe: fb.fbe, tarifa: fb.tk != null ? fb.tk * ft : null, C: C, N: Pt.N, w: Pt.w, ativos: at, R: R, meta: (B.meta || 0) * ft,
+      var meta = (B.meta || 0) * ft;
+      var cs = [{k: "hoje", tau: P.tau}, {k: "a", p: A.p, f: A.f * fc, cap: A.cap}, {k: "b", p: B.p, f: B.f * fc, sig: B.sig, meta: meta, cap: B.cap}];
+      var M = [[], [], []], sfm = [];
+      if (zerar) saldo = 0;
+      for (var m = 0; m < 12; m++) {
+        var im = perfil ? perfil[m] : Pt.i, ov = {i: im};
+        M[0].push(cascata(Pt, cs[0], ov)); M[1].push(cascata(Pt, cs[1], ov));
+        var g0 = cascata(Pt, {k: "b", p: B.p, f: cs[2].f, cap: B.cap}, ov).g0, exc = g0 - meta, ini = saldo, ab = 0, sf = 0;
+        if (B.sig) {
+          if (!carry) sf = B.sig * Math.max(0, exc);
+          else if (exc < 0) saldo += -exc;
+          else { ab = Math.min(saldo, exc); saldo -= ab; sf = B.sig * (exc - ab); }
+        }
+        M[2].push(cascata(Pt, cs[2], {i: im, sf: sf}));
+        sfm.push({mes: m + 1, i: im, g0: g0, meta: meta, exc: exc, ini: ini, ab: ab, sf: sf, fim: carry ? saldo : 0});
+      }
+      if (!carry) saldo = 0;
+      var R = M.map(media), at = Pt.N ? Pt.N * Pt.w : 1;
+      var lin = {t: t, ano: X.ano + t, pfb: fb.pfb, fbe: fb.fbe, tarifa: fb.tk != null ? fb.tk * ft : null, C: C, N: Pt.N, w: Pt.w, ativos: at, R: R, meta: meta, Pt: Pt,
+        sfm: sfm, sfAno: sfm.reduce(function (s, x) { return s + x.sf; }, 0) * at,
         ger: R.map(function (r) { return r.gerador * at * 12; }), th: R.map(function (r) { return r.thopen * at * 12; }),
         rec: R.map(function (r) { return r.receita * at * 12; })};
       lin.acG = lin.ger.map(function (v, j) { ac[j][0] += v; return ac[j][0]; });
@@ -599,7 +747,215 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
         T ? (T.gd === "I" ? "GD I: sem Fio B, a tarifa só segue o reajuste." : "Fio B SCEE indisponível: a tarifa só segue o reajuste.") :
         "Sem distribuidora da lista: o Fio B não é escalonado; a tarifa só segue o reajuste.") +
       (X.deg ? " Degradação de " + pc(X.deg) + " a.a. na capacidade." : "") + (X.w1 != null ? " Ocupação de " + pcc(X.w1) + " no ano 1." : "") +
+      (X.perfil ? " Inadimplência mês a mês informada (média de " + pc(mediaArr(X.perfil)) + ")." : "") +
+      (U.cens[2].sig ? " Success fee apurado " + sfModoTxt(U.cens[2]) + "." : "") + capTxtProj(U) +
       (U.proj.porCliente ? " Sem capacidade da usina: valores por cliente ativo por ano." : " Valores da usina em R$ por ano.");
+  }
+  function mediaArr(a) { return a.reduce(function (s, v) { return s + v; }, 0) / a.length; }
+  function sfModoTxt(B) { return B.carry ? "com saldo acumulado" + (B.zerar ? ", zerado a cada ano" : " durante todo o contrato") : "mês a mês, sem saldo acumulado"; }
+  function capTxtProj(U) {
+    var q = [1, 2].filter(function (j) { return U.cens[j].cap; }).map(function (j) { return U.cens[j].nome; });
+    return q.length ? " Fee fixo sobre a capacidade da usina em " + q.join(" e ") + ": o Gerador paga também as vagas." : "";
+  }
+
+  // ---------------- success fee: exemplo alternado (base + X e base - X, alternando), simples x saldo acumulado
+  function sfAlternado(U) {
+    var B = U.cens[2], X = U.X, P = U.P;
+    if (!B.sig) return null;
+    var pf = []; for (var m = 0; m < 12; m++) pf.push(Math.min(0.9999, Math.max(0, P.i + (m % 2 === 0 ? X.sfpp : -X.sfpp))));
+    var s = projeta(U, {perfil: pf, carry: false}), c = projeta(U, {perfil: pf, carry: true});
+    return {pf: pf, anos: s.anos.map(function (l, t) { var lc = c.anos[t]; return {ano: l.ano, s: l.sfAno, c: lc.sfAno, gs: l.ger[2], gc: lc.ger[2], saldo: lc.sfm[11].fim}; })};
+  }
+  function renderSf(U) {
+    var B = U.cens[2], X = U.X, S = U.sfAlt, uni = U.proj.porCliente ? " (R$ por cliente ativo por ano)" : " (R$ por ano na usina)";
+    if (!S) {
+      $("sf-info").textContent = "A proposta " + B.nome + " não tem success fee: informe o % do excedente para ver a apuração.";
+      $("t-sf-alt").innerHTML = ""; $("t-sf-mes").innerHTML = ""; return;
+    }
+    $("sf-info").textContent = "Apuração escolhida: " + sfModoTxt(B) + ". Meta de " + brl(B.meta) + " por cliente/mês no ano 1 (segue o reajuste da tarifa). " +
+      "Mensal simples: cada mês com repasse acima da meta paga " + pcc(B.sig) + " do excedente, mesmo depois de meses abaixo da meta. Saldo acumulado: o déficit dos meses abaixo da meta " +
+      "acumula e o excedente seguinte primeiro abate esse saldo. Exemplo alternado: inadimplência de " + pc(S.pf[0]) + " e " + pc(S.pf[1]) + " em meses alternados (base " + pc(U.P.i) + " ± " +
+      f1.format(X.sfpp * 100) + " p.p.)" + (B.zerar ? ", saldo zerado a cada ano." : ", saldo levado de um ano para o outro.") +
+      (X.perfil ? " Cenário atual com a inadimplência mês a mês informada." : " Sem inadimplência mês a mês, o cenário atual usa a base em todos os meses: saldo acumulado e simples dão o mesmo resultado.");
+    var h = "<thead><tr><th>Ano</th><th>Success fee simples" + esc(uni) + "</th><th>Success fee com saldo acumulado" + esc(uni) + "</th><th>Diferença</th><th>Repasse ao Gerador simples</th><th>Repasse ao Gerador com saldo acumulado</th><th>Saldo no fim do ano (R$/cliente)</th></tr></thead><tbody>";
+    var ts = 0, tc = 0;
+    S.anos.slice(0, X.prazo).forEach(function (l) { ts += l.s; tc += l.c;
+      h += "<tr><td>" + l.ano + "</td>" + cel(l.s, brl) + cel(l.c, brl) + cel(l.c - l.s, brlS, 1) + cel(l.gs, brl) + cel(l.gc, brl) + cel(l.saldo, brl) + "</tr>"; });
+    h += '<tr class="tot"><td>Total ' + X.prazo + " anos</td>" + cel(ts, brl) + cel(tc, brl) + cel(tc - ts, brlS, 1) + "<td></td><td></td><td></td></tr>";
+    $("t-sf-alt").innerHTML = h + "</tbody>";
+    var l0 = U.proj.anos[0];
+    var hm = "<thead><tr><th>Mês</th><th>Inadimplência</th><th>Gerador antes do success fee (R$/cliente)</th><th>Meta</th><th>Excedente (+) ou déficit (-)</th><th>Saldo no início</th><th>Abatido do saldo</th><th>Success fee (R$/cliente)</th><th>Saldo no fim</th></tr></thead><tbody>";
+    l0.sfm.forEach(function (x) {
+      hm += "<tr><td>" + x.mes + "/" + l0.ano + '</td><td class="n">' + esc(pc(x.i)) + "</td>" + cel(x.g0, brl) + cel(x.meta, brl) + cel(x.exc, brlS, 1) + cel(x.ini, brl) + cel(x.ab, brl) + cel(x.sf, brl) + cel(x.fim, brl) + "</tr>"; });
+    $("t-sf-mes").innerHTML = hm + "</tbody>";
+  }
+
+  // ---------------- calculo reverso do fee (espelho de fee_reverso em asset_management.py)
+  function reverso(U) {
+    var P = U.P, X = U.X, w = X.rvW, L = [];
+    var req = function (m) { var cu = P.o + P.g / w; if (X.rvU === "pct") { var den = 1 - P.t - m; return den > 0 ? cu / den : null; } return (m + cu) / (1 - P.t); };
+    var alvos = X.rvM ? [X.rvM, 0] : [0];
+    [1, 2].forEach(function (j) {
+      var c = U.cens[j], k = c.cap ? w : 1;
+      alvos.forEach(function (m, q) {
+        var R = req(m);
+        L.push({j: j, c: c, m: m, alvo: q === 0, R: R, fixo: R == null ? null : (R - c.p * P.F) * k, pct: R == null ? null : (R - c.f / k) / P.F,
+          soPct: R == null ? null : R / P.F, soFixo: R == null ? null : R * k});
+      });
+    });
+    return {w: w, L: L, sfB: U.R[2].sf || 0};
+  }
+  function pc2(v) { return v == null || !isFinite(v) ? "-" : f2.format(v * 100) + "%"; }
+  function margTxt(U, m) { return U.X.rvU === "pct" ? pcc(m) + " do fee" : brlS(m) + " por cliente ativo/mês"; }
+  function renderRv(U) {
+    var V = U.rv, X = U.X, P = U.P;
+    $("h-rv-ocup").textContent = "vazio = ocupação base (" + pcc(P.w) + ")";
+    var h = "<thead><tr><th>Proposta</th><th>Margem da Thopen</th><th>Fee necessário por cliente ativo</th><th>Fee fixo mantendo o %</th><th>Fee % mantendo o fixo</th><th>Só %</th><th>Só fixo</th></tr></thead><tbody>";
+    V.L.forEach(function (l) {
+      var nm = l.c.nome + (l.j === 2 ? " (piso, sem success fee)" : "") + (l.c.cap ? " (fixo sobre a capacidade)" : "");
+      h += "<tr" + (l.alvo && X.rvM ? "" : ' class="tot"') + "><td>" + esc(nm) + "</td><td>" + esc(l.m ? margTxt(U, l.m) : "empate (margem 0)") + "</td>" +
+        (l.R == null ? '<td class="n" colspan="5">impostos + margem chegam a 100%: sem solução</td>' :
+          cel(l.R, brl) + cel(l.fixo, brl, 1) + '<td class="n">' + esc(pc2(l.pct) + " (mantendo " + brl(l.c.f) + ")") + "</td>" + '<td class="n">' + esc(pc2(l.soPct)) + "</td>" + cel(l.soFixo, brl)) + "</tr>";
+    });
+    $("t-reverso").innerHTML = h + "</tbody>";
+    var B = U.cens[2];
+    $("rv-nota").textContent = "Ocupação do cálculo: " + pcc(V.w) + (X.rvWPad ? " (base)" : " (a base é " + pcc(P.w) + ": aplicado à proposta, o resultado na base fica diferente)") +
+      ". Fee fixo mantendo o % de cada proposta (" + pcc(U.cens[1].p) + " e " + pcc(B.p) + "); fee % mantendo o fixo (" + brl(U.cens[1].f) + " e " + brl(B.f) + "). " +
+      "Com fee fixo sobre a capacidade, o fixo mostrado é o contratual por UC da capacidade (fixo por cliente ativo x ocupação). " +
+      (B.sig ? "Proposta " + B.nome + ": success fee esperado na base de " + brl(V.sfB) + " por cliente ativo/mês" +
+        (V.sfB ? ", que soma " + brlS(V.sfB * (1 - P.t)) + " à margem depois dos impostos." : (B.metaBase ? " (meta igual ao resultado do Gerador na base: o success fee só aparece com inadimplência abaixo da base)." : ".")) : "") +
+      " Negativo no fee % ou no fixo: o outro componente sozinho já entrega a margem.";
+  }
+  function fmtCampo(v, casas) { var r = Math.round(v * Math.pow(10, casas)) / Math.pow(10, casas); return String(r).replace(".", ","); }
+  function aplicaRv(j, campo) {
+    if (!U || !U.rv) return;
+    var l = U.rv.L.filter(function (x) { return x.j === j && x.alvo; })[0];
+    if (!l || l.R == null) return;
+    if (campo === "f") $(j === 1 ? "f-fa" : "f-fb").value = fmtCampo(l.fixo, 4);
+    else $(j === 1 ? "f-pa" : "f-pb").value = fmtCampo(l.pct * 100, 4);
+    aoDigitar();
+    msg("Aplicado à proposta " + (j === 1 ? "A" : "B") + ".");
+  }
+
+  // ---------------- comparacao com o arrendamento (porte de calc_arrendamento do painel; espelho de arrendamento_mwh)
+  function arrMwh(tusd, te, icms, pc, fte, ftu, s, d, c, fb, fbCom) {
+    var kpc = 1 / (1 - pc), kf = 1 / ((1 - icms) * (1 - pc)), kte = fte ? kf : kpc, ktu = ftu ? kf : kpc;
+    var u = tusd + te, wi = tusd * ktu + te * kte, y = wi - u, cfb = fbCom ? fb * kf : fb;
+    var dono = (1 - d) * u + s * y - cfb, th = d * u + (1 - s) * y, desc = c * wi;
+    return {U: u, WI: wi, Y: y, V: u * kf, kf: kf, cfb: cfb, s: s, d: d, c: c, dono: dono, th: th, desc: desc, mg: th - desc,
+      pk: dono / 1000, dimp: u ? 1 - dono / u : null, cli: wi * (1 - c) - cfb};
+  }
+  function arrDporP(r, P) { return r.U ? 1 - (1000 * P + r.cfb - r.s * r.Y) / r.U : null; }
+  function arrMes(Pt, r, qu, qv, at, i) {  // espelho de arrendamento_mes (R$/mes da usina; sem capacidade, por cliente ativo)
+    var ger = r.dono * qu, en = r.cli * qv, df = Pt.Df * at, arr = (en + df) * (1 - i);
+    var rec = arr - df - Pt.Rc * at - ger, imp = rec > 0 ? rec * Pt.t : 0, cu = (Pt.o + Pt.g / Pt.w) * at;
+    return {ger: ger, mg: r.mg * qu, en: en, df: df, arr: arr, perda: (en + df) * i, canal: Pt.Rc * at, rec: rec, imp: imp, cu: cu, th: rec - imp - cu};
+  }
+  function comparaArr(U) {
+    var T = U.tar, X = U.X, P = U.P, A = X.arr;
+    if (!T) return {erro: "Escolha a distribuidora na lista do painel (premissas) para usar a tarifa da ANEEL no arrendamento."};
+    var tf = n("f-tarifa"), cons = U.cons || (ok(tf) && tf > 0 ? P.C / tf : null);
+    if (!cons) return {erro: "Informe o consumo médio por cliente (ou a tarifa compensável) para converter o arrendamento em energia."};
+    if (A.modo === "p" && A.p == null) return {erro: "Informe o preço ao dono em R$/kWh (ex.: 0,45) ou use a base deságio."};
+    var e = T.e, temFb = T.gd !== "I" && e.fio_b_scee != null, qp0 = P.N && U.cap.comp != null ? U.cap.comp : null, anos = [];
+    for (var t = 0; t < X.H; t++) {
+      var f = Math.pow(1 + X.rt, t), pfb = temFb ? J.pct_fb[T.gd][idxAno(X.ano + t)] : 0, fb = temFb ? e.fio_b_scee * f * pfb : 0;
+      var args = [e.tusd * f, e.te * f, e.icms, e.pc, e.flag_icms_te, e.flag_icms_tusd, A.s];
+      var d = A.d;
+      if (A.modo === "p") d = arrDporP(arrMwh.apply(null, args.concat([0, A.c, fb, A.fbCom])), A.p * f);
+      var r = arrMwh.apply(null, args.concat([d, A.c, fb, A.fbCom]));
+      var l = U.proj.anos[t], Pt = l.Pt, at = l.ativos, qv = at * cons / 1000, qu = qp0 != null ? qp0 * Math.pow(1 - X.deg, t) : qv;
+      qv = Math.min(qv, qu);
+      var ms = [], perfil = X.perfil;
+      for (var m = 0; m < 12; m++) ms.push(arrMes(Pt, r, qu, qv, at, perfil ? perfil[m] : Pt.i));
+      var soma = function (k) { return ms.reduce(function (s, x) { return s + x[k]; }, 0); };
+      anos.push({t: t, ano: X.ano + t, pfb: pfb, d: d, r: r, qu: qu, qv: qv, ativos: at, ger: soma("ger"), mg: soma("mg"), th: soma("th"), rec: soma("rec"),
+        imp: soma("imp"), cu: soma("cu"), perda: soma("perda"), canal: soma("canal")});
+    }
+    var tot = function (k, m, tx) { var s = 0; for (var q = 0; q < m; q++) s += anos[q][k] / (tx == null ? 1 : Math.pow(1 + tx, q + 1)); return s; };
+    var pz = function (m) { var o = {k: m}; ["ger", "mg", "th"].forEach(function (k) { o[k] = {tot: tot(k, m), vpl: X.taxa == null ? null : tot(k, m, X.taxa)}; }); return o; };
+    var R = {anos: anos, cons: cons, consPad: !U.cons, qp0: qp0, temFb: temFb, fbInd: T.gd !== "I" && e.fio_b_scee == null, prazos: X.prazos.map(pz), principal: pz(X.prazo)};
+    R.riscos = arrRiscos(U); R.veredito = arrVeredito(U, R);
+    return R;
+  }
+  function arrRiscos(U) {  // quem fica com cada risco: [risco, Hoje, A, B, Arrendamento] (G = Gerador, T = Thopen, D = dividido)
+    var A = U.cens[1], B = U.cens[2];
+    var vac = function (c) { return c.cap ? ["G", "Gerador (fee fixo sobre a capacidade: paga as vagas)"] : ["D", "Dividido (Gerador perde repasse; Thopen perde fee fixo e o G&A continua)"]; };
+    return [
+      ["Inadimplência", ["T", "Thopen (o Gerador recebe Take Rate x crédito bruto)"], ["G", "Gerador (fee sênior sobre a energia faturada)"], ["G", "Gerador (fee sênior; o success fee cai junto)"], ["T", "Thopen (paga o dono e a fatura da distribuidora dos inadimplentes)"]],
+      ["Desconto ao cliente", ["T", "Thopen (Gerador sobre o crédito bruto)"], ["D", "Gerador; o fee % cai um pouco"], ["D", "Gerador; o fee % cai um pouco"], ["T", "Thopen (sai da parte da Thopen)"]],
+      ["Vacância", ["D", "Dividido (Gerador por cliente ativo; Thopen perde a sobra e o G&A continua)"], vac(A), vac(B), ["T", "Thopen (paga ao dono a energia da usina inteira)"]],
+      ["Fio B (Lei 14.300)", ["D", "Dividido (crédito cai: Gerador e sobra da Thopen)"], ["G", "Gerador; o fee % cai um pouco"], ["G", "Gerador; o fee % cai um pouco"], ["G", "Gerador (o dono paga o custo do Fio B)"]]
+    ];
+  }
+  function arrVeredito(U, R) {
+    var X = U.X, PJ = U.proj, k = X.taxa != null ? "vpl" : "tot", rot = (X.taxa != null ? "VPL " : "total ") + X.prazo + " anos";
+    var nomes = NM.concat(["Arrendamento"]), pp = PJ.principal, ap = R.principal;
+    var th = [pp.th[0][k], pp.th[1][k], pp.th[2][k], ap.th[k]], ge = [pp.ger[0][k], pp.ger[1][k], pp.ger[2][k], ap.ger[k]];
+    var melhor = function (v) { var j = 0; v.forEach(function (x, q) { if (x > v[j]) j = q; }); return j; };
+    var jt = melhor(th), jg = melhor(ge), pts = {G: 0, D: 1, T: 2}, sc = [0, 0, 0, 0];
+    R.riscos = R.riscos || arrRiscos(U);
+    R.riscos.forEach(function (l) { for (var q = 0; q < 4; q++) sc[q] += pts[l[q + 1][0]]; });
+    var mn = Math.min.apply(null, sc), menores = nomes.filter(function (x, q) { return sc[q] === mn; });
+    return {jt: jt, jg: jg, sc: sc, linhas: [
+      "Thopen (" + rot + "): " + nomes[jt] + " (" + brlS(th[jt]) + "); arrendamento " + brlS(th[3]) + " no resultado comparável (com custos, impostos e inadimplência).",
+      "Gerador (" + rot + "): " + nomes[jg] + " (" + brl(ge[jg]) + "); arrendamento paga ao dono " + brl(ge[3]) + ".",
+      "Risco para a Thopen: menor em " + menores.join(" e ") + "; o arrendamento deixa inadimplência, desconto e vacância com a Thopen" +
+        " (pontos de risco da Thopen: " + nomes.map(function (x, q) { return x + " " + sc[q]; }).join(", ") + "; 0 = nenhum risco com a Thopen)."]};
+  }
+  function renderArr(U) {
+    var R = U.arr, X = U.X, A = X.arr;
+    $("l-arr-d").style.display = A.modo === "p" ? "none" : ""; $("l-arr-p").style.display = A.modo === "p" ? "" : "none";
+    $("h-arr-c").textContent = "vazio = desconto das premissas (" + pc(U.P.d) + ")";
+    if (R.erro) { $("arr-aviso").innerHTML = '<div class="aviso">' + esc(R.erro) + "</div>"; $("arr-saida").style.display = "none"; return; }
+    $("arr-saida").style.display = ""; $("arr-aviso").innerHTML = R.fbInd ? '<div class="aviso">Fio B SCEE indisponível para esta distribuidora: arrendamento sem custo do Fio B.</div>' : "";
+    var a0 = R.anos[0], r = a0.r, mw = function (v) { return v == null || !isFinite(v) ? "-" : f2.format(v); };
+    var lm = [["Tarifa sem impostos U = TUSD + TE (R$/MWh)", mw(r.U)], ["Valor compensado W_I (R$/MWh)", mw(r.WI)], ["Benefício fiscal Y = W_I - U (R$/MWh)", mw(r.Y)],
+      ["Custo do Fio B " + (A.fbCom ? "com" : "sem") + " impostos (" + pc(a0.pfb) + " do Fio B SCEE em " + a0.ano + ", R$/MWh)", mw(r.cfb)],
+      ["Deságio nominal d", pc(a0.d) + (A.modo === "p" ? " (do preço informado)" : A.dPad ? " (padrão)" : "")], ["VB do dono s", pc(A.s) + (A.sPad ? " (padrão)" : "")],
+      ["Pagamento ao dono (1 - d) x U + s x Y - Fio B (R$/MWh)", mw(r.dono)], ["Preço ao dono (R$/kWh, líquido do Fio B)", f4.format(r.pk)],
+      ["Deságio implícito sobre U", pc(r.dimp)], ["Parte da Thopen d x U + (1 - s) x Y (R$/MWh)", mw(r.th)],
+      ["Desconto ao cliente c x W_I (" + pc(A.c) + ", R$/MWh)", mw(r.desc)], ["Margem líquida da Thopen (R$/MWh)", mw(r.mg)],
+      ["Cliente paga W_I x (1 - c) - Fio B (R$/MWh)", mw(r.cli)]];
+    $("t-arr-mwh").innerHTML = "<thead><tr><th>Item</th><th>Valor</th></tr></thead><tbody>" + lm.map(function (x) { return "<tr><td>" + esc(x[0]) + '</td><td class="n">' + esc(x[1]) + "</td></tr>"; }).join("") + "</tbody>";
+    var h = "<thead><tr><th>Ano</th><th>% Fio B</th><th>Deságio</th><th>Energia da usina (MWh/mês)</th><th>Energia dos clientes ativos (MWh/mês)</th><th>Gerador: pagamento ao dono (R$/ano)</th>" +
+      "<th>Thopen: margem do painel (R$/ano)</th><th>Inadimplência (R$/ano)</th><th>Recorrência do canal (R$/ano)</th><th>Impostos (R$/ano)</th><th>Custo de operação e G&amp;A (R$/ano)</th><th>Thopen: resultado comparável (R$/ano)</th></tr></thead><tbody>";
+    R.anos.slice(0, X.prazo).forEach(function (l) {
+      h += "<tr><td>" + l.ano + '</td><td class="n">' + esc(pcc(l.pfb)) + '</td><td class="n">' + esc(pc(l.d)) + '</td><td class="n">' + esc(f2.format(l.qu)) + '</td><td class="n">' + esc(f2.format(l.qv)) + "</td>" +
+        cel(l.ger, brl, 1) + cel(l.mg, brlS, 1) + cel(l.perda, brl) + cel(l.canal, brl) + cel(l.imp, brl) + cel(l.cu, brl) + cel(l.th, brlS, 1) + "</tr>";
+    });
+    $("t-arr-ano").innerHTML = h + "</tbody>";
+    var C = arrComp(U);
+    $("t-arr-comp").innerHTML = "<thead><tr>" + C.cab.map(function (c) { return "<th>" + esc(c) + "</th>"; }).join("") + "</tr></thead><tbody>" +
+      C.linhas.map(function (l) { return "<tr>" + l.map(function (v, q) { return q ? cel(v, q % 2 ? brl : brlS, 1) : "<td>" + esc(v) + "</td>"; }).join("") + "</tr>"; }).join("") + "</tbody>";
+    var rk = {G: "Gerador", T: "Thopen", D: "Dividido"};
+    $("t-arr-risco").innerHTML = "<thead><tr><th>Risco</th>" + NM.concat(["Arrendamento"]).map(function (x) { return "<th>" + esc(x) + "</th>"; }).join("") + "</tr></thead><tbody>" +
+      R.riscos.map(function (l) { return "<tr><td>" + esc(l[0]) + "</td>" + l.slice(1).map(function (x) { return '<td style="white-space:normal">' + esc(x[1]) + "</td>"; }).join("") + "</tr>"; }).join("") + "</tbody>";
+    $("arr-veredito").innerHTML = "<ul>" + R.veredito.linhas.map(function (x) { return "<li>" + esc(x) + "</li>"; }).join("") + "</ul>";
+    $("arr-nota").textContent = arrNota(U);
+  }
+  function arrComp(U) {  // Lado a lado: ano 1 por mes e total/VPL por prazo
+    var R = U.arr, X = U.X, PJ = U.proj, a0 = PJ.anos[0], r0 = R.anos[0];
+    var cab = ["Modelo", "Gerador R$/mês (ano 1)", "Thopen R$/mês (ano 1)"];
+    X.prazos.forEach(function (k) { cab.push("Gerador total " + k + " anos", "Thopen total " + k + " anos"); if (X.taxa != null) cab.push("Gerador VPL " + k + " anos", "Thopen VPL " + k + " anos"); });
+    var lin = function (nome, gm, tm, pz) {
+      var o = [nome, gm, tm];
+      pz.forEach(function (p) { o.push(p.g.tot, p.t.tot); if (X.taxa != null) o.push(p.g.vpl, p.t.vpl); });
+      return o;
+    };
+    var L = [0, 1, 2].map(function (j) { return lin(NM[j], a0.ger[j] / 12, a0.th[j] / 12, PJ.prazos.map(function (p) { return {g: p.ger[j], t: p.th[j]}; })); });
+    L.push(lin("Arrendamento: margem do painel (sem custos)", r0.ger / 12, r0.mg / 12, R.prazos.map(function (p) { return {g: p.ger, t: p.mg}; })));
+    L.push(lin("Arrendamento: resultado comparável", r0.ger / 12, r0.th / 12, R.prazos.map(function (p) { return {g: p.ger, t: p.th}; })));
+    return {cab: cab, linhas: L};
+  }
+  function arrNota(U) {
+    var R = U.arr, X = U.X;
+    return "Energia: clientes ativos x consumo de " + f0.format(R.cons) + " kWh/mês" + (R.consPad ? " (consumo = crédito bruto / tarifa compensável)" : "") +
+      (R.qp0 != null ? "; o dono recebe pela energia compensada da usina (" + f2.format(R.qp0) + " MWh/mês no ano 1), então a vacância fica com a Thopen" : "; sem capacidade de geração, a energia da usina é a dos clientes ativos (vacância não modelada)") +
+      ". TUSD, TE e Fio B SCEE reajustados pela tarifa (" + pc(X.rt) + " a.a.); % do Fio B pela Lei 14.300 em cada ano civil" + (X.arr.modo === "p" ? "; preço ao dono reajustado pelo mesmo índice e deságio recalculado a cada ano" : "") + "." +
+      " Margem do painel = (parte da Thopen - desconto ao cliente) x energia da usina: não inclui custo de operação, G&A, impostos nem inadimplência (no arrendamento a inadimplência é da Thopen)." +
+      " Resultado comparável = o cliente paga (energia + fatura da distribuidora) x (1 - inadimplência); a Thopen paga a fatura da distribuidora, a recorrência do canal e o dono; impostos sobre a sobra (como no Hoje); menos custo de operação e G&A, como no Asset." +
+      (R.anos[0].ativos === 1 && U.proj.porCliente ? " Sem capacidade da usina: valores por cliente ativo." : " Valores da usina.");
   }
   function renderProj(U) {
     var X = U.X, PJ = U.proj, a = PJ.anos.slice(0, X.prazo), tot = PJ.principal;
@@ -638,13 +994,15 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
 
   // ---------------- textos (veredito, clausulas, objecoes)
   function minOc(U, j) {  // ocupacao minima contratual para a proposta j (1 = A, 2 = B)
+    if (U.cens[j].cap) return null;  // fee fixo sobre a capacidade: ocupacao minima desnecessaria
     var v = n("f-ocmin"); if (v != null && !isNaN(v)) return v;
     var s = U.R[j].ocs; if (s == null) return null;
     return Math.ceil(s * 100 - 1e-9) / 100;
   }
+  var CAP_TXT = "fee fixo devido sobre a capacidade contratada da usina, independente da ocupação";
   function descCen(c) {
-    var t = pcc(c.p) + " da energia faturada com desconto + " + brl(c.f) + " por UC/mês";
-    if (c.k === "b") t += " + success fee de " + pcc(c.sig) + " do resultado do Gerador acima de " + brl(c.meta) + " por cliente/mês";
+    var t = pcc(c.p) + " da energia faturada com desconto + " + brl(c.f) + " por UC/mês" + (c.cap ? " (" + CAP_TXT + ")" : "");
+    if (c.k === "b") t += " + success fee de " + pcc(c.sig) + " do resultado do Gerador acima de " + brl(c.meta) + " por cliente/mês" + (c.sig ? ", apurado " + sfModoTxt(c) : "");
     return t;
   }
   function vale(U) {
@@ -658,7 +1016,13 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
       var mot = [];
       mot.push("Resultado da Thopen na base: " + brlS(r.thopen) + " por cliente ativo/mês" + (r.tot ? " (" + brlS(r.thopen * r.tot) + "/mês na usina)" : "") + ".");
       mot.push("Com ocupação de " + pcc(wmin) + ": " + brlS(rw.thopen) + " por cliente ativo/mês.");
-      mot.push(ws == null ? "Ocupação de equilíbrio: não fecha em nenhuma ocupação." : "Ocupação de equilíbrio: " + pc(ws) + (ws > 1 ? " (acima de 100%: não fecha nem com a usina cheia)" : "") + ".");
+      mot.push("Ocupação de equilíbrio: " + ocsTxt(r) + ".");
+      if (c.cap) mot.push("Fee fixo sobre a capacidade: a receita de fee fixo da Thopen não cai com a vacância (" + brl(c.f) + " por UC da capacidade); o Gerador paga também as vagas.");
+      if (c.k === "b" && c.sig && U.sfAlt) {
+        var sa = U.sfAlt.anos[0];
+        mot.push("Success fee " + sfModoTxt(c) + ". No exemplo alternado (± " + f1.format(U.X.sfpp * 100) + " p.p.), ano 1: simples " + brl(sa.s) + " x saldo acumulado " + brl(sa.c) +
+          (U.proj.porCliente ? " por cliente ativo." : " na usina."));
+      }
       mot.push("Gerador: " + brl(r.gerador) + " por cliente/mês, " + pcS(r.varG) + " vs hoje (" + brl(U.R[0].gerador) + ").");
       if (c.k === "a") mot.push("Fee não varia com a inadimplência: o resultado da Thopen é o mesmo de " + pcc(U.inads[0]) + " a " + pcc(U.inads[U.inads.length - 1]) + ".");
       else mot.push("Upside com inadimplência 0%: success fee de " + brl(z.sf) + ", Thopen " + brlS(z.thopen) + ", Gerador " + brl(z.gerador) + " (antes do success fee " + brl(z.g0) + ").");
@@ -676,8 +1040,9 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
       var alerta = alProj.length ? alProj.join(" ") : null;
       if (neg) {
         var x = minOc(U, j);
-        alerta = (alerta ? alerta + " " : "") + "Com ocupação de " + pcc(neg.w) + " a proposta " + c.nome + " fica negativa (" + brlS(neg.v) + "): considerar fee fixo por UC sobre a capacidade da usina" +
-          (x != null && x <= 1 ? " ou cláusula de ocupação mínima de " + pcc(x) + "." : ".");
+        alerta = (alerta ? alerta + " " : "") + "Com ocupação de " + pcc(neg.w) + " a proposta " + c.nome + " fica negativa (" + brlS(neg.v) + ")" +
+          (c.cap ? " mesmo com o fee fixo sobre a capacidade: aumentar o fee fixo (ver Cálculo reverso do fee)." :
+            ": considerar fee fixo por UC sobre a capacidade da usina" + (x != null && x <= 1 ? " ou cláusula de ocupação mínima de " + pcc(x) + "." : "."));
       }
       out.itens.push({k: c.k, nome: c.nome, st: st, selo: {ok: "Viável", med: "Viável com ressalvas", ruim: "Não fecha"}[st], mot: mot, alerta: alerta,
         chave: [{ok: 2, med: 1, ruim: 0}[st], Math.min(r.thopen, rw.thopen), r.thopen]});
@@ -686,12 +1051,13 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
     var ra = U.R[1], rb = U.R[2];
     var na = U.cens[1].nome, nb = U.cens[2].nome;
     out.ranking.push("Para a Thopen: " + it[0].nome + " à frente (" + it[0].selo.toLowerCase() + "). Resultado na base: " + na + " " + brlS(ra.thopen) + " x " + nb + " " + brlS(rb.thopen) +
-      "; ocupação de equilíbrio: " + na + " " + (ra.ocs == null ? "não fecha" : pc(ra.ocs)) + " x " + nb + " " + (rb.ocs == null ? "não fecha" : pc(rb.ocs)) + ".");
+      "; ocupação de equilíbrio: " + na + " " + ocsTxt(ra) + " x " + nb + " " + ocsTxt(rb) + ".");
     out.ranking.push("Para o Gerador: " + (ra.gerador >= rb.gerador ? na : nb) + " paga mais na base (" + na + " " + brl(ra.gerador) + " x " + nb + " " + brl(rb.gerador) +
       "); com inadimplência 0% a proposta " + nb + " divide o ganho (Gerador " + brl(U.zero[2].gerador) + ").");
     var pzP = U.proj.principal, vk = U.X.taxa != null ? "vpl" : "tot", vr = U.X.taxa != null ? "VPL" : "total";
     out.ranking.push("No prazo de " + U.X.prazo + " anos (" + vr + "): Thopen " + na + " " + brlS(pzP.th[1][vk]) + " x " + nb + " " + brlS(pzP.th[2][vk]) + " x hoje " + brlS(pzP.th[0][vk]) +
       "; Gerador " + na + " " + brl(pzP.ger[1][vk]) + " x " + nb + " " + brl(pzP.ger[2][vk]) + " x hoje " + brl(pzP.ger[0][vk]) + ".");
+    if (U.arr && !U.arr.erro) out.ranking.push("Comparação com o arrendamento: " + U.arr.veredito.linhas.join(" "));
     out.melhor = it[0].k;
     var h = U.R[0], hz = U.zero[0];
     out.hoje = "Hoje (Take Rate " + pcc(P.tau) + "): receita da Thopen " + brlS(h.receita) + " e resultado " + brlS(h.thopen) + " por cliente ativo/mês na base; com inadimplência 0%: receita " +
@@ -704,18 +1070,20 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
     var P = U.P, A = U.cens[1], B = U.cens[2], dm = n("f-descmax"), s1 = n("f-sla1"), s2 = n("f-sla2"), reg = txt("f-regua");
     var xa = minOc(U, 1), xb = minOc(U, 2);
     var oc = function (x) { return x == null || x > 1 ? "ocupação mínima a definir" : "ocupação mínima de " + pcc(x) + " (abaixo dela o fee fixo é cobrado sobre " + pcc(x) + " da capacidade)"; };
+    var vac = function (c, x) {
+      return c.cap ? c.nome + ": " + CAP_TXT + " (" + brl(c.f) + " por UC" + (P.N ? " x " + f0.format(P.N) + " UCs" : "") + "); a cláusula de ocupação mínima é desnecessária."
+        : c.nome + ": fee fixo de " + brl(c.f) + " por UC ativa; alternativa: fee fixo sobre a capacidade da usina" + (P.N ? " (" + f0.format(P.N) + " UCs)" : "") + " ou " + oc(x) + ".";
+    };
     var L = [];
     L.push({tit: "Fee sênior na cascata", txt: "A ACER arrecada do cliente, paga a fatura da distribuidora, a recorrência do canal e o fee de gestão, nesta ordem, e repassa o saldo ao Gerador. O fee é pago antes do repasse ao Gerador."});
     L.push({tit: "Base de cálculo do fee", txt: "O fee percentual incide sobre a energia faturada com desconto ao cliente (hoje " + brl(P.F) + " por cliente/mês), independentemente do valor arrecadado. " + A.nome + ": " +
-      descCen(A) + ". " + B.nome + ": " + pcc(B.p) + " da energia faturada com desconto + " + brl(B.f) + " por UC/mês."});
+      descCen(A) + ". " + B.nome + ": " + pcc(B.p) + " da energia faturada com desconto + " + brl(B.f) + " por UC/mês" + (B.cap ? " (" + CAP_TXT + ")" : "") + "."});
     L.push({tit: "Política de desconto ao cliente", txt: "Desconto pré-acordado com o Gerador" + (dm != null && !isNaN(dm) ? ", com faixa máxima de " + pcc(dm) : ", com faixa máxima a definir") +
       " (premissa atual: " + pcc(P.d) + "). Descontos acima da faixa exigem aprovação prévia do Gerador e são informados no relatório mensal."});
     L.push({tit: "SLA de cobrança", txt: "Régua de cobrança " + (reg ? "(" + reg + ")" : "definida em anexo") + "; início da cobrança em " + (s1 != null && !isNaN(s1) ? f0.format(s1) + " dias" : "prazo a definir") +
       " após o vencimento e negativação em " + (s2 != null && !isNaN(s2) ? f0.format(s2) + " dias" : "prazo a definir") + ". A inadimplência fica com o Gerador, com acompanhamento mensal dos indicadores de cobrança."});
-    L.push({tit: "Apuração e meta do success fee (" + B.nome + ")", txt: "Apuração mensal por usina. Meta de " + brl(B.meta) + " por cliente/mês de repasse ao Gerador; o success fee é " + pcc(B.sig) +
-      " do excedente acima da meta. Sugestão: meses abaixo da meta acumulam o déficit (carry-forward), que é compensado antes de novo success fee."});
-    L.push({tit: "Ocupação e vacância", txt: A.nome + ": fee fixo de " + brl(A.f) + " por UC sobre a capacidade da usina" + (P.N ? " (" + f0.format(P.N) + " UCs)" : "") + " ou " + oc(xa) +
-      ". " + B.nome + ": fee fixo de " + brl(B.f) + " por UC sobre a capacidade ou " + oc(xb) + "."});
+    L.push({tit: "Apuração e meta do success fee (" + B.nome + ")", txt: sfClausula(B)});
+    L.push({tit: "Ocupação e vacância", txt: vac(A, xa) + " " + vac(B, xb)});
     var X = U.X, dbase = U.data ? U.data.split("-").reverse().join("/") : "data de assinatura do contrato";
     L.push({tit: "Prazo, reajuste e data-base", txt: "Prazo de " + X.prazo + " anos a partir de " + X.ano + ". O fee fixo por UC é reajustado anualmente pelo " +
       (X.rcPad ? "IPCA" : "índice contratual") + " (premissa da projeção: " + pc(X.rc) + " a.a.), com data-base em " + dbase +
@@ -725,18 +1093,37 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
     return L;
   }
 
+  function sfClausula(B) {
+    var base = "Meta de " + brl(B.meta) + " por cliente/mês de repasse ao Gerador; o success fee é " + pcc(B.sig) + " do excedente acima da meta. ";
+    return B.carry ? "Apuração mensal por usina com saldo acumulado (carry-forward). " + base + "Quando o repasse fica abaixo da meta, a diferença acumula em saldo; os excedentes seguintes primeiro abatem esse saldo e só o restante gera success fee." +
+      (B.zerar ? " O saldo é zerado ao fim de cada ano de contrato." : " O saldo vale durante todo o contrato.")
+      : "Apuração mensal simples por usina. " + base + "Cada mês é apurado isoladamente: meses abaixo da meta não geram success fee e não acumulam déficit.";
+  }
   function objecoes(U) {
-    var P = U.P, h = U.R[0], hz = U.zero[0], A = U.R[1], B = U.R[2];
+    var P = U.P, h = U.R[0], hz = U.zero[0], A = U.R[1], B = U.R[2], cA = U.cens[1], cB = U.cens[2];
+    var ocTxt = function (c, r) { return c.cap ? "fee fixo sobre a capacidade" : (r.ocs == null ? "a definir" : pcc(Math.ceil(r.ocs * 100 - 1e-9) / 100)); };
+    var extra = [];
+    if (cA.cap || cB.cap) extra.push({obj: "\"Com fee fixo sobre a capacidade, eu pago pelas vagas.\"", resp: "Sim: a Thopen monta a operação para a usina inteira e o G&A não cai com a vacância. Em troca, o fee % e o success fee só existem sobre a energia faturada, então a Thopen continua com incentivo para encher a usina; a ocupação mínima deixa de ser necessária."});
+    if (cB.sig) extra.push({obj: "\"Vou pagar success fee num mês bom depois de meses ruins?\"", resp: cB.carry ? "Não: com saldo acumulado, o déficit dos meses abaixo da meta é compensado antes de novo success fee." +
+      (U.sfAlt ? " No exemplo alternado de ± " + f1.format(U.X.sfpp * 100) + " p.p., o success fee do ano 1 cai de " + brl(U.sfAlt.anos[0].s) + " (simples) para " + brl(U.sfAlt.anos[0].c) + "." : "")
+      : "Na apuração simples, sim. Se for um ponto de negociação, a proposta pode passar para saldo acumulado (carry-forward)" +
+      (U.sfAlt ? ": no exemplo alternado de ± " + f1.format(U.X.sfpp * 100) + " p.p., o success fee do ano 1 cai de " + brl(U.sfAlt.anos[0].s) + " para " + brl(U.sfAlt.anos[0].c) + "." : ".")});
+    if (U.arr && !U.arr.erro) {
+      var ra = U.arr.anos[0], a0 = U.proj.anos[0];
+      extra.push({obj: "\"Prefiro arrendar a usina e receber um valor por kWh.\"", resp: "No arrendamento (deságio de " + pc(ra.d) + ", preço ao dono de R$ " + f4.format(ra.r.pk) + "/kWh) o Gerador receberia " + brl(ra.ger / 12) +
+        " por mês no ano 1, contra " + brl(a0.ger[1] / 12) + " na proposta " + cA.nome + " e " + brl(a0.ger[2] / 12) + " na proposta " + cB.nome +
+        ". No arrendamento a Thopen fica com inadimplência, desconto e vacância, e precisa de deságio maior para cobrir esses riscos."});
+    }
     return [
       {obj: "\"Vocês cobram fee sobre fatura que não foi paga.\"", resp: "O fee remunera a gestão da energia faturada (" + brl(P.F) + " por cliente/mês), e não depende da cobrança. A Thopen não carrega o risco de crédito. Em troca o Gerador tem SLA de cobrança, relatório mensal e, na proposta " + U.cens[2].nome + ", divide o ganho quando a inadimplência cai: com 0% o Gerador recebe " + brl(U.zero[2].gerador) + " por cliente/mês."},
       {obj: "\"Quem define o desconto ao cliente?\"", resp: "O desconto é pré-acordado com faixa máxima (premissa atual " + pcc(P.d) + "); mudanças precisam de aprovação do Gerador e aparecem no relatório mensal."},
       {obj: "\"O fee é alto; hoje eu recebo mais com o Take Rate.\"", resp: "Hoje o Gerador recebe " + brl(h.gerador) + " por cliente/mês e a Thopen fica com " + brlS(h.receita) + " de receita, resultado " + brlS(h.thopen) +
         " por cliente ativo; mesmo com inadimplência 0% o resultado é " + brlS(hz.thopen) + ". O modelo não se sustenta. Na proposta " + U.cens[1].nome + " o Gerador recebe " + brl(A.gerador) + " (" + pcS(A.varG) + ") e na proposta " + U.cens[2].nome + " " + brl(B.gerador) + " (" + pcS(B.varG) + "), com fee fixo e previsível."},
       {obj: "\"E a vacância?\"", resp: "A vacância é dividida: o Gerador perde receita e a Thopen perde fee enquanto o G&A continua. Por isso o fee fixo incide sobre a capacidade da usina ou há ocupação mínima contratual (" +
-        U.cens[1].nome + ": " + (A.ocs == null ? "a definir" : pcc(Math.ceil(A.ocs * 100 - 1e-9) / 100)) + "; " + U.cens[2].nome + ": " + (B.ocs == null ? "a definir" : pcc(Math.ceil(B.ocs * 100 - 1e-9) / 100)) + ")."},
+        cA.nome + ": " + ocTxt(cA, A) + "; " + cB.nome + ": " + ocTxt(cB, B) + ")."},
       {obj: "\"Como eu confiro os números?\"", resp: "Conta segregada da ACER por usina, relatório mensal com a cascata completa e direito de auditoria anual."},
       {obj: "\"Por que o fee é sênior?\"", resp: "Porque remunera a operação que gera a receita (faturamento, cobrança, atendimento, compensação). Sem ele a operação para e o Gerador perde a usina inteira; inadimplência, desconto e meses negativos ficam com o dono do ativo, como em qualquer gestão de ativos."}
-    ];
+    ].concat(extra);
   }
 
   // ---------------- valores por kWh (espelho de valores_kwh em asset_management.py)
@@ -856,7 +1243,7 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
       " (" + esc(B.nome) + ")</th><th>Só %</th></tr></thead><tbody>" + BO.map(function (b) {
         return "<tr><td" + (b[6] ? ' class="atual"' : "") + ">" + esc(pcc(b[0])) + "</td>" + cel(b[1], brl) + cel(b[2], brl) + cel(b[3], brl) + cel(b[4], brl) + '<td class="n">' + esc(pc(b[5])) + "</td></tr>"; }).join("") + "</tbody>";
     $("t-ocstar").innerHTML = "<thead><tr><th>Cenário</th><th>Receita por cliente ativo</th><th>Ocupação de equilíbrio</th></tr></thead><tbody>" +
-      R.map(function (r, j) { return "<tr><td>" + esc(nomes[j]) + "</td>" + cel(r.receita, brlS, 1) + '<td class="n">' + esc(r.ocs == null ? "não fecha em nenhuma ocupação" : pc(r.ocs) + (r.ocs > 1 ? " (acima de 100%)" : "")) + "</td></tr>"; }).join("") + "</tbody>";
+      R.map(function (r, j) { return "<tr><td>" + esc(nomes[j]) + "</td>" + cel(r.receita, brlS, 1) + '<td class="n">' + esc(ocsTxt(r)) + "</td></tr>"; }).join("") + "</tbody>";
 
     // sensibilidade
     var gU = P.N ? " por usina (R$/mês)" : " por cliente";
@@ -864,6 +1251,9 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
     $("t-sens-w").innerHTML = sensTab("Ocupação", U.ocups, U.SW, P.w, function (r) { return P.N ? r.gerador * r.tot : r.gerador; }, gU);
     renderKwh(U);
     renderProj(U);
+    renderRv(U);
+    renderSf(U);
+    renderArr(U);
     graficos(U);
 
     // vale a pena
@@ -880,14 +1270,15 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
   function kpi(r, v, s) { return '<div class="card kpi"><div class="rot">' + esc(r) + '</div><div class="val">' + esc(v) + '</div><div class="mut">' + esc(s) + "</div></div>"; }
   function equivalencias(U) {
     var P = U.P, Rs = rEquil(P, P.w), A = U.cens[1], B = U.cens[2];
+    var k = function (c) { return c.cap ? P.w : 1; }, cp = function (c) { return c.cap ? ", fixo sobre a capacidade" : ""; };  // capacidade: fixo contratual = por ativo x ocupacao
     return [["Só fixo", 0, Rs], ["Só %", Rs / P.F, 0],
-      ["Com o % de " + A.nome + " (" + pcc(A.p) + ")", A.p, Rs - A.p * P.F], ["Com o % de " + B.nome + " (" + pcc(B.p) + ")", B.p, Rs - B.p * P.F],
-      ["Com o fixo de " + A.nome + " (" + brl(A.f) + ")", (Rs - A.f) / P.F, A.f], ["Com o fixo de " + B.nome + " (" + brl(B.f) + ")", (Rs - B.f) / P.F, B.f],
+      ["Com o % de " + A.nome + " (" + pcc(A.p) + cp(A) + ")", A.p, (Rs - A.p * P.F) * k(A)], ["Com o % de " + B.nome + " (" + pcc(B.p) + cp(B) + ")", B.p, (Rs - B.p * P.F) * k(B)],
+      ["Com o fixo de " + A.nome + " (" + brl(A.f) + cp(A) + ")", (Rs - A.f / k(A)) / P.F, A.f], ["Com o fixo de " + B.nome + " (" + brl(B.f) + cp(B) + ")", (Rs - B.f / k(B)) / P.F, B.f],
       ["Fixo igual ao custo de operação (" + brl(P.o) + ")", (Rs - P.o) / P.F, P.o]];
   }
   function beOcup(U) {
     var P = U.P, A = U.cens[1], B = U.cens[2];
-    return U.ocups.map(function (w) { var Rs = rEquil(P, w); return [w, P.g / w, Rs, Rs - A.p * P.F, Rs - B.p * P.F, Rs / P.F, Math.abs(w - P.w) < 1e-9]; });
+    return U.ocups.map(function (w) { var Rs = rEquil(P, w); return [w, P.g / w, Rs, (Rs - A.p * P.F) * (A.cap ? w : 1), (Rs - B.p * P.F) * (B.cap ? w : 1), Rs / P.F, Math.abs(w - P.w) < 1e-9]; });
   }
   function sensTab(rot, xs, S, base, fg, gU) {
     var nomes = U.cens.map(function (c) { return c.nome; });
@@ -976,7 +1367,10 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
       ["Prazo do contrato (anos)", N(U.X.prazo, "int")], ["Prazos comparados (anos)", U.X.prazos.join("; ")], ["Ano de início", String(U.X.ano)],
       ["Reajuste anual da tarifa", N(U.X.rt, "pct")], ["Reajuste do fee fixo, recorrência e custos", N(U.X.rc, "pct")],
       ["Taxa de desconto para VPL", U.X.taxa == null ? "-" : N(U.X.taxa, "pct")], ["Ocupação no ano 1", U.X.w1 == null ? "-" : N(U.X.w1, "pct")],
-      ["Degradação anual", N(U.X.deg, "pct")]]);
+      ["Degradação anual", N(U.X.deg, "pct")],
+      ["Proposta A: base do fee fixo", U.cens[1].cap ? "capacidade da usina" : "clientes ativos"], ["Proposta B: base do fee fixo", U.cens[2].cap ? "capacidade da usina" : "clientes ativos"],
+      ["Apuração do success fee", sfModoTxt(U.cens[2])], ["Inadimplência mês a mês", U.X.perfil ? U.X.perfil.map(function (v) { return f1.format(v * 100); }).join("; ") + " (%)" : "base em todos os meses"],
+      ["Variação do exemplo alternado (p.p.)", N(U.X.sfpp * 100, "n2")]]);
     S.push({nome: "Premissas", tit: "Premissas (R$ por cliente por mês)", blocos: [{cab: ["Premissa", "Valor"], linhas: pr,
       nota: "Fee = % x energia faturada com desconto + fixo; arrecadação = (energia faturada com desconto + fatura da distribuidora) x (1 - inadimplência); resultado da Thopen = receita x (1 - impostos) - custo de operação - G&A / ocupação."}]});
     var q = [];
@@ -999,9 +1393,17 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
       {tit: "Equivalências na ocupação base", cab: ["Estrutura", "Fee %", "Fee fixo"], linhas: equivalencias(U).map(function (e) { return [e[0], N(e[1], "pct"), N(e[2])]; })},
       {tit: "Por ocupação", cab: ["Ocupação", "G&A por cliente ativo", "Receita de equilíbrio", "Fixo com % de " + NM[1], "Fixo com % de " + NM[2], "Só %"],
         linhas: beOcup(U).map(function (b) { return [N(b[0], "pct"), N(b[1]), N(b[2]), N(b[3]), N(b[4]), N(b[5], "pct")]; })},
-      {tit: "Ocupação de equilíbrio", cab: ["Cenário", "Receita por cliente ativo", "Ocupação de equilíbrio"], linhas: R.map(function (r, j) { return [nomes[j], N(r.receita), r.ocs == null ? "não fecha em nenhuma ocupação" : N(r.ocs, "pct")]; })},
+      {tit: "Ocupação de equilíbrio", cab: ["Cenário", "Receita por cliente ativo", "Ocupação de equilíbrio"], linhas: R.map(function (r, j) { return [nomes[j], N(r.receita), r.oe.t === "acima" ? N(r.ocs, "pct") : ocsTxt(r)]; })},
       {tit: "Vale a pena?", cab: ["Proposta", "Veredito", "Motivos"], linhas: U.vale.itens.map(function (it) { return [it.nome, it.selo, it.mot.join(" ") + (it.alerta ? " ALERTA: " + it.alerta : "")]; })
         .concat(U.vale.ranking.map(function (m) { return ["Comparação", "", m]; }), [["Hoje", "", U.vale.hoje]])}]});
+    var V = U.rv;
+    S.push({nome: "Cálculo reverso", tit: "Cálculo reverso do fee", blocos: [
+      {cab: ["Premissa", "Valor"], linhas: [["Margem desejada da Thopen", U.X.rvU === "pct" ? N(U.X.rvM, "pct") : N(U.X.rvM)], ["Unidade", U.X.rvU === "pct" ? "% do fee" : "R$ por cliente ativo por mês"],
+        ["Ocupação do cálculo", N(V.w, "pct")], ["Success fee esperado na base (proposta B, R$/cliente ativo/mês)", N(V.sfB)]]},
+      {tit: "Fee necessário", cab: ["Proposta", "Margem da Thopen", "Fee necessário por cliente ativo", "Fee fixo mantendo o %", "Fee % mantendo o fixo", "Só %", "Só fixo"],
+        linhas: V.L.map(function (l) { return [l.c.nome + (l.j === 2 ? " (piso, sem success fee)" : "") + (l.c.cap ? " (fixo sobre a capacidade)" : ""), l.m ? margTxt(U, l.m) : "empate (margem 0)"]
+          .concat(l.R == null ? ["sem solução", "", "", "", ""] : [N(l.R), N(l.fixo), N(l.pct, "pct"), N(l.soPct, "pct"), N(l.soFixo)]); }),
+        nota: "Fee = (margem + custo de operação + G&A / ocupação) / (1 - impostos); com margem em % do fee: (custo de operação + G&A / ocupação) / (1 - impostos - margem). Fixo = fee - % x energia faturada com desconto; % = (fee - fixo) / energia faturada com desconto. Com fee fixo sobre a capacidade, fixo contratual = fixo por ativo x ocupação."}]});
     var sens = function (xs, SS, fg) { return xs.map(function (x, k) { return [N(x, "pct")].concat(SS[k].map(function (r) { return N(r.thopen); }), SS[k].map(function (r) { return N(fg(r)); })); }); };
     var cabS = function (rot, gU) { return [rot].concat(nomes.map(function (x) { return "Thopen: " + x; }), nomes.map(function (x) { return "Gerador" + gU + ": " + x; })); };
     S.push({nome: "Sensibilidade", tit: "Sensibilidade (resultado da Thopen por cliente ativo; Gerador)", blocos: [
@@ -1031,6 +1433,36 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
       {tit: "Thopen", cab: ["Prazo"].concat(NM.map(function (x) { return "Total: " + x; }), NM.map(function (x) { return "VPL: " + x; }), porAB("Receita total: ")),
         linhas: pj.prazos.map(function (p) { return [p.k + " anos"].concat(p.th.map(function (x) { return N(x.tot); }), p.th.map(vpP), [N(p.rec[1].tot), N(p.rec[2].tot)]); }),
         nota: U.X.taxa != null ? "VPL a " + pc(U.X.taxa) + " a.a., fluxos anuais no fim de cada ano." : "Sem taxa de desconto: VPL não calculado."}]});
+    var B = U.cens[2], sfb = [];
+    if (U.sfAlt) sfb.push({tit: "Por ano: mensal simples x saldo acumulado (exemplo alternado ± " + f1.format(U.X.sfpp * 100) + " p.p.)",
+      cab: ["Ano", "Success fee simples", "Success fee com saldo acumulado", "Diferença", "Repasse ao Gerador simples", "Repasse ao Gerador com saldo acumulado", "Saldo no fim do ano (R$/cliente)"],
+      linhas: U.sfAlt.anos.slice(0, U.X.prazo).map(function (l) { return [String(l.ano), N(l.s), N(l.c), N(l.c - l.s), N(l.gs), N(l.gc), N(l.saldo)]; }),
+      nota: (pj.porCliente ? "R$ por cliente ativo por ano." : "R$ por ano na usina.") + " Inadimplência alternada: " + pc(U.sfAlt.pf[0]) + " e " + pc(U.sfAlt.pf[1]) + "."});
+    sfb.push({tit: "Por ano no cenário atual (" + sfModoTxt(B) + ")", cab: ["Ano", "Meta (R$/cliente/mês)", "Success fee no ano", "Saldo no fim do ano (R$/cliente)"],
+      linhas: pj.anos.slice(0, U.X.prazo).map(function (l) { return [String(l.ano), N(l.meta), N(l.sfAno), N(l.sfm[11].fim)]; })});
+    sfb.push({tit: "Mês a mês no cenário atual (R$ por cliente ativo)", excel: true,
+      cab: ["Ano", "Mês", "Inadimplência", "Gerador antes do success fee", "Meta", "Excedente (+) ou déficit (-)", "Saldo no início", "Abatido do saldo", "Success fee", "Saldo no fim", "Success fee na usina"],
+      linhas: [].concat.apply([], pj.anos.slice(0, U.X.prazo).map(function (l) { return l.sfm.map(function (x) {
+        return [String(l.ano), String(x.mes), N(x.i, "pct"), N(x.g0), N(x.meta), N(x.exc), N(x.ini), N(x.ab), N(x.sf), N(x.fim), N(x.sf * l.ativos)]; }); }))});
+    S.push({nome: "Success fee mensal", tit: "Apuração do success fee (" + B.nome + ")", blocos: sfb.concat([{cab: ["Cláusula"], linhas: [[sfClausula(B)]]}])});
+    var AR = U.arr;
+    if (AR.erro) S.push({nome: "Comparação arrendamento", tit: "Comparação com o arrendamento", blocos: [{cab: ["Aviso"], linhas: [[AR.erro]]}]});
+    else {
+      var Ax = U.X.arr, C = arrComp(U), a0 = AR.anos[0], r0 = a0.r;
+      S.push({nome: "Comparação arrendamento", tit: "Comparação com o arrendamento", blocos: [
+        {cab: ["Premissa", "Valor"], linhas: [["Base", Ax.modo === "p" ? "preço ao dono" : "deságio"], ["Deságio nominal no ano 1", N(a0.d, "pct")],
+          ["Preço ao dono no ano 1 (R$/kWh, líquido do Fio B)", N(r0.pk, "n4")], ["VB do dono", N(Ax.s, "pct")], ["Desconto ao cliente (% do valor compensado)", N(Ax.c, "pct")],
+          ["Custo do Fio B", Ax.fbCom ? "com impostos" : "sem impostos"], ["Consumo por cliente (kWh/mês)", N(AR.cons, "n2")],
+          ["Energia compensada da usina no ano 1 (MWh/mês)", AR.qp0 != null ? N(AR.qp0, "n2") : "sem capacidade: energia dos clientes ativos"]]},
+        {tit: "Por MWh compensado (ano 1)", cab: ["Item", "R$/MWh"], linhas: [["U = TUSD + TE", N(r0.U, "n2")], ["W_I", N(r0.WI, "n2")], ["Y = W_I - U", N(r0.Y, "n2")], ["Custo do Fio B", N(r0.cfb, "n2")],
+          ["Pagamento ao dono", N(r0.dono, "n2")], ["Parte da Thopen", N(r0.th, "n2")], ["Desconto ao cliente", N(r0.desc, "n2")], ["Margem líquida da Thopen", N(r0.mg, "n2")], ["Cliente paga", N(r0.cli, "n2")]]},
+        {tit: "Por ano", cab: ["Ano", "% Fio B", "Deságio", "Energia da usina (MWh/mês)", "Energia dos clientes ativos (MWh/mês)", "Gerador: pagamento ao dono", "Thopen: margem do painel",
+          "Inadimplência", "Recorrência do canal", "Impostos", "Custo de operação e G&A", "Thopen: resultado comparável"],
+          linhas: AR.anos.slice(0, U.X.prazo).map(function (l) { return [String(l.ano), N(l.pfb, "pct"), N(l.d, "pct"), N(l.qu, "n2"), N(l.qv, "n2"), N(l.ger), N(l.mg), N(l.perda), N(l.canal), N(l.imp), N(l.cu), N(l.th)]; })},
+        {tit: "Lado a lado", cab: C.cab, linhas: C.linhas.map(function (l) { return [l[0]].concat(l.slice(1).map(function (v) { return N(v); })); })},
+        {tit: "Quem fica com cada risco", cab: ["Risco"].concat(NM, ["Arrendamento"]), linhas: AR.riscos.map(function (l) { return [l[0]].concat(l.slice(1).map(function (x) { return x[1]; })); })},
+        {tit: "Melhor modelo para esta usina", cab: ["Critério"], linhas: AR.veredito.linhas.map(function (x) { return [x]; }), nota: arrNota(U)}]});
+    }
     S.push({nome: "Cláusulas", tit: "Cláusulas contratuais essenciais", blocos: [{cab: ["Cláusula", "Texto"], linhas: U.claus.map(function (c) { return [c.tit, c.txt]; })}]});
     S.push({nome: "Objeções", tit: "Objeções do Gerador e respostas", blocos: [{cab: ["Objeção", "Resposta"], linhas: U.obj.map(function (o) { return [o.obj, o.resp]; })}]});
     return S;
@@ -1159,7 +1591,7 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
 
   // >>> PROPOSTA AO GERADOR (lista branca de campos; nada de custos, impostos ou resultado da Thopen)
   var GER_CAMPOS = ["usina", "distribuidora", "data", "premissas", "estrutura", "resultado", "usinaTot", "sensInad", "sensOcup", "clausulas", "nota",
-    "tarifa", "capacidade", "projecao", "prazos", "notaProj", "kwh", "kwhCab", "kwhNota"];
+    "tarifa", "capacidade", "projecao", "prazos", "notaProj", "kwh", "kwhCab", "kwhNota", "sfApuracao", "sfSens"];
   function gerDados(U) {
     var P = U.P, R = U.R, A = U.cens[1], B = U.cens[2];
     var linha = function (j) { var r = R[j]; return [U.cens[j].nome, N(r.arr), N(r.df), N(r.canal), N(r.fee), N(r.sf), N(r.gerador), j ? N(r.varG, "pct") : "-"]; };
@@ -1185,7 +1617,10 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
       kwhCab: ["Item"].concat(kwhCab(U, "")),
       kwhNota: kwhNota(U) + " Fee de gestão Thopen = fee % + fee fixo + success fee, pago antes do repasse ao Gerador. Hoje não há fee de gestão.",
       nota: "Valores por cliente por mês. O fee incide sobre a energia faturada com desconto e é pago antes do repasse; inadimplência, desconto e fatura da distribuidora não paga ficam no repasse ao Gerador." +
-        (P.N ? " Valores por usina com " + f0.format(P.N) + " clientes e ocupação de " + pcc(P.w) + "." : "")
+        (P.N ? " Valores por usina com " + f0.format(P.N) + " clientes e ocupação de " + pcc(P.w) + "." : "") +
+        (A.cap || B.cap ? " Fee fixo sobre a capacidade contratada: devido sobre todas as UCs da usina, independente da ocupação; por cliente ativo = fee fixo / ocupação." : ""),
+      sfApuracao: B.sig ? sfClausula(B) : null,
+      sfSens: U.sfAlt ? U.sfAlt.anos.slice(0, U.X.prazo).map(function (l) { return [String(l.ano), N(l.s), N(l.c), N(l.gs), N(l.gc)]; }) : null
     };
     var o = {}; GER_CAMPOS.forEach(function (k) { o[k] = src[k]; });
     return o;
@@ -1202,7 +1637,11 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
       '<p class="nota">' + esc(o.nota) + "</p></div>" +
       '<div class="sec"><h2>Sensibilidade do repasse ao Gerador: inadimplência (R$ por cliente por mês)</h2>' + relTabela(["Inadimplência"].concat(nm), o.sensInad) +
       (o.sensOcup ? "<h2>Sensibilidade do repasse ao Gerador: ocupação (R$ por mês na usina)</h2>" + relTabela(["Ocupação"].concat(nm), o.sensOcup) : "") +
-      "<h2>Cláusulas principais</h2>" + relTabela(["Cláusula", "Texto"], o.clausulas) + "</div>" +
+      "<h2>Cláusulas principais</h2>" + relTabela(["Cláusula", "Texto"], o.clausulas) +
+      (o.sfApuracao ? "<h2>Apuração do success fee</h2><p>" + esc(o.sfApuracao) + "</p>" : "") +
+      (o.sfSens ? "<h3>Success fee por ano: mensal simples x saldo acumulado (" + (U.proj.porCliente ? "R$ por cliente ativo por ano" : "R$ por ano na usina") +
+        "; exemplo com inadimplência alternando " + pc(U.sfAlt.pf[0]) + " e " + pc(U.sfAlt.pf[1]) + ")</h3>" +
+        relTabela(["Ano", "Success fee: mensal simples", "Success fee: saldo acumulado", "Repasse ao Gerador: mensal simples", "Repasse ao Gerador: saldo acumulado"], o.sfSens) : "") + "</div>" +
       '<div class="sec"><h2>Usina e tarifa da distribuidora</h2>' + (o.tarifa.length ? relTabela(["Item", "Valor"], o.tarifa) : "") +
       (o.capacidade.length ? "<h3>Capacidade de geração</h3>" + relTabela(["Item", "Valor"], o.capacidade) : "") +
       "<h2>Projeção do repasse ao Gerador por ano (" + (U.proj.porCliente ? "R$ por cliente ativo por ano" : "R$ por ano na usina") + ")</h2>" +
@@ -1212,7 +1651,7 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
     return relDoc("Proposta de Asset Management", o.usina, c, false);
   }
   // <<< PROPOSTA AO GERADOR
-  var GER_PROIBIDO = /custo de opera|G&A|break-even|margem|resultado da Thopen|receita da Thopen|equil[ií]brio|obje[cç]|imposto|vale a pena|veredito|uso interno/i;
+  var GER_PROIBIDO = /custo de opera|G&A|break-even|margem|resultado da Thopen|receita da Thopen|equil[ií]brio|obje[cç]|imposto|vale a pena|veredito|uso interno|arrendamento|c[aá]lculo reverso/i;
   function gerLimpo(html, o) {
     var t = html.split(esc(o.usina)).join(" ").replace(/<style[\s\S]*?<\/style>/g, " ").replace(/<[^>]+>/g, " ")
       .replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
@@ -1222,7 +1661,9 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
     var corpo = "";
     dadosInternos(U).forEach(function (s, k) {
       corpo += '<div class="sec' + (k ? "" : " pri") + '"><h2>' + esc(s.tit) + "</h2>";
-      s.blocos.forEach(function (b) { if (b.tit) corpo += "<h3>" + esc(b.tit) + "</h3>"; corpo += relTabela(b.cab, b.linhas); if (b.nota) corpo += '<p class="nota">' + esc(b.nota) + "</p>"; });
+      s.blocos.forEach(function (b) {
+        if (b.excel) { corpo += '<p class="nota">' + esc(b.tit) + ": detalhe completo na planilha Excel.</p>"; return; }
+        if (b.tit) corpo += "<h3>" + esc(b.tit) + "</h3>"; corpo += relTabela(b.cab, b.linhas); if (b.nota) corpo += '<p class="nota">' + esc(b.nota) + "</p>"; });
       if (s.nome === "Projeção") { try { if (GR["g-proj"]) corpo += '<img class="graf" style="width:70%" alt="gráfico" src="' + GR["g-proj"].canvas.toDataURL("image/png") + '">'; } catch (e) {} }
       if (s.nome === "Valores por kWh") { try { if (GR["g-kwh"]) corpo += '<img class="graf" style="width:50%" alt="gráfico" src="' + GR["g-kwh"].canvas.toDataURL("image/png") + '">'; } catch (e) {} }
       if (s.nome === "Sensibilidade") ["g-ti", "g-tw", "g-gi"].forEach(function (id) { try { if (GR[id]) corpo += '<img class="graf" alt="gráfico" src="' + GR[id].canvas.toDataURL("image/png") + '">'; } catch (e) {} });
@@ -1250,14 +1691,22 @@ th.ped{font-size:11px;color:#D6DEEE;font-weight:400}
     $("f-meta").placeholder = $("f-meta-base").checked && U ? f2.format(U.cens[2].meta) : "";
     $("f-nome-a").placeholder = nomeAuto(L.A.p, L.A.f, 0);
     $("f-nome-b").placeholder = nomeAuto(L.B.p, L.B.f, L.B.sig);
+    [["f-bfa", L.A], ["f-bfb", L.B]].forEach(function (x) {
+      var c = x[1], w = P.w > 0 && P.w <= 1 ? P.w : 1;
+      $("h-" + x[0].slice(2)).textContent = !c.cap ? "fee fixo por cliente ativo" :
+        (P.N ? "devido sobre " + f0.format(P.N) + " UCs; " : "sem capacidade da usina: calculado por cliente ativo com a ocupação; ") +
+        "por cliente ativo = fee fixo / ocupação" + (c.f ? " (" + brl(c.f / w) + ")" : "");
+    });
+    $("f-sfzera").disabled = $("f-sfmodo").value !== "carry";
   }
-  CAMPOS.concat(["f-meta-base"]).forEach(function (id) { $(id).addEventListener("input", aoDigitar); $(id).addEventListener("change", aoDigitar); });
+  CAMPOS.concat(["f-meta-base", "f-sfzera"]).forEach(function (id) { $(id).addEventListener("input", aoDigitar); $(id).addEventListener("change", aoDigitar); });
+  [["b-rv-fa", 1, "f"], ["b-rv-pa", 1, "p"], ["b-rv-fb", 2, "f"], ["b-rv-pb", 2, "p"]].forEach(function (b) { $(b[0]).addEventListener("click", function () { aplicaRv(b[1], b[2]); }); });
   $("b-limpar").addEventListener("click", function () {
     if (!confirm("Limpar todas as premissas deste navegador?")) return;
     aplica(null); try { localStorage.removeItem(CHAVE); } catch (e) {} aoDigitar();
   });
   $("b-salvar").addEventListener("click", function () {
-    var blob = new Blob([JSON.stringify({tipo: "proposta_asset", versao: 3, salvo_em: new Date().toISOString(), campos: estado()}, null, 2)], {type: "application/json"});
+    var blob = new Blob([JSON.stringify({tipo: "proposta_asset", versao: 4, salvo_em: new Date().toISOString(), campos: estado()}, null, 2)], {type: "application/json"});
     var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = nomeArq("cenario", "json");
     document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   });

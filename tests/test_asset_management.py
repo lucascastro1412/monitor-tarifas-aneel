@@ -423,3 +423,204 @@ def test_pdf_gerador_lista_branca_sem_termos_internos():
     bloco = "\n".join(l for l in bloco.splitlines() if not l.strip().startswith("//"))
     for s in re.findall(r'"([^"\\]{3,})"', bloco):
         assert not rx.search(s), s
+
+
+# ---------------- calculo reverso do fee
+
+@pytest.mark.parametrize("cap", [False, True])
+@pytest.mark.parametrize("w", [1.0, 0.8, 0.6])
+def test_fee_reverso_fixo_entrega_a_margem(cap, w):
+    p = _p(ocupacao=w)
+    for margem in (0.0, 10.0, -3.0):
+        r = am.fee_reverso(p, margem, "rs", pct=0.05, fixo=12.0, capacidade=cap)
+        assert am.proposta(p, 0.05, r["fixo"], capacidade=cap)["thopen"] == pytest.approx(margem)
+        assert am.proposta(p, r["pct"], 12.0, capacidade=cap)["thopen"] == pytest.approx(margem)
+        assert am.proposta(p, r["so_pct"], 0.0)["thopen"] == pytest.approx(margem)
+        assert am.proposta(p, 0.0, r["so_fixo"], capacidade=cap)["thopen"] == pytest.approx(margem)
+    # empate = receita de equilibrio do break-even
+    assert am.fee_reverso(p, 0.0)["receita"] == pytest.approx(am.receita_equilibrio(p))
+
+
+def test_fee_reverso_margem_em_pct_do_fee_e_ocupacao_de_calculo():
+    p = _p()
+    r = am.fee_reverso(p, 0.25, "pct", pct=0.05)
+    x = am.proposta(p, 0.05, r["fixo"])
+    assert x["thopen"] == pytest.approx(0.25 * x["fee"])
+    assert r["receita"] == pytest.approx(28 / (1 - 0.10 - 0.25))
+    assert am.fee_reverso(p, 0.95, "pct") is None                    # impostos + margem >= 100%
+    r7 = am.fee_reverso(p, 10.0, ocupacao=0.7, pct=0.05, capacidade=True)
+    assert am.proposta(_p(ocupacao=0.7), 0.05, r7["fixo"], capacidade=True)["thopen"] == pytest.approx(10.0)
+    assert r7["so_fixo"] == pytest.approx(r7["receita"] * 0.7)       # fixo contratual sobre a capacidade
+
+
+# ---------------- fee fixo sobre a capacidade
+
+def test_fee_sobre_capacidade_receita_constante_e_gerador_paga():
+    N = 1000
+    receitas, geradores = [], []
+    for w in (1.0, 0.9, 0.7, 0.5):
+        p = _p(ocupacao=w, clientes=N)
+        r = am.proposta(p, 0.05, 20.0, capacidade=True)
+        assert r["fee_fixo"] == pytest.approx(20.0 / w)
+        receitas.append(r["fee_fixo"] * N * w)                        # fee fixo da usina por mes
+        geradores.append(r["gerador"])
+        assert r["gerador"] + r["receita"] + p.fatura_dist + p.recorrencia_canal == pytest.approx(am.arrecadacao(p))
+        assert r["gerador"] == pytest.approx(am.proposta(p, 0.05, 20.0)["gerador"] - (20.0 / w - 20.0))
+    assert all(x == pytest.approx(20000.0) for x in receitas)
+    assert geradores == sorted(geradores, reverse=True)              # Gerador paga as vagas
+    # base clientes ativos: igual ao modelo anterior
+    assert am.proposta(_p(ocupacao=0.7), 0.05, 20.0)["fee_fixo"] == 20.0
+
+
+def test_ocupacao_de_equilibrio_com_fee_sobre_capacidade():
+    p = _p()
+    # fixo x (1 - impostos) cobre o G&A e o % cobre o custo de operacao: sempre positivo
+    e = am.ocupacao_equilibrio_fee(p, 0.05, 30.0, capacidade=True)
+    assert e["tipo"] == "sempre"
+    for w in (0.3, 0.6, 1.0):
+        assert am.proposta(_p(ocupacao=w), 0.05, 30.0, capacidade=True)["thopen"] > 0
+    # base clientes ativos: mesma ocupacao de equilibrio do modelo anterior
+    e2 = am.ocupacao_equilibrio_fee(p, 0.05, 30.0)
+    assert e2["tipo"] == "acima" and e2["ocupacao"] == pytest.approx(am.ocupacao_equilibrio(p, 42.75))
+    # capacidade com fixo pequeno: equilibrio recalculado e resultado zero nele
+    e3 = am.ocupacao_equilibrio_fee(p, 0.05, 10.0, capacidade=True)
+    assert e3["tipo"] == "acima"
+    assert am.proposta(_p(ocupacao=e3["ocupacao"]), 0.05, 10.0, capacidade=True)["thopen"] == pytest.approx(0.0, abs=1e-9)
+    assert am.ocupacao_equilibrio_fee(p, 0.0, 5.0)["tipo"] == "nunca"
+
+
+def test_projecao_com_fee_sobre_capacidade():
+    a = {"pct": 0.05, "fixo": 20.0, "cap": True}
+    pr = am.projecao(_p(clientes=1000, ocupacao=0.8), 3, 0.6, a, B_, ocupacao_ano1=0.5, degradacao=0.05)
+    for x in pr:
+        fee_fixo_usina = x["por_cliente"]["a"]["fee_fixo"] * x["ativos"]
+        assert fee_fixo_usina == pytest.approx(20.0 * x["premissas"].clientes)  # capacidade do ano x fixo
+
+
+# ---------------- success fee com saldo acumulado
+
+def test_success_fee_perfil_constante_igual_ao_simples():
+    p = _p()
+    b_s = dict(B_, meta=150.0)
+    b_c = dict(b_s, carry=True)
+    s = am.projecao(p, 3, 0.6, A_, b_s)
+    c = am.projecao(p, 3, 0.6, A_, b_c, perfil_inad=[0.10] * 12)
+    for x, y in zip(s, c):
+        assert x["success_fee_ano"] > 0
+        assert y["success_fee_ano"] == pytest.approx(x["success_fee_ano"])
+        assert y["b"]["thopen"] == pytest.approx(x["b"]["thopen"])
+
+
+def test_success_fee_alternado_carry_paga_menos():
+    p = _p()
+    perfil = am.perfil_alternado(0.10, 0.05)
+    assert perfil[:4] == pytest.approx([0.15, 0.05, 0.15, 0.05])
+    s = am.projecao(p, 2, 0.6, A_, B_, perfil_inad=perfil)
+    c = am.projecao(p, 2, 0.6, A_, dict(B_, carry=True), perfil_inad=perfil)
+    assert s[0]["success_fee_ano"] > 0
+    assert c[0]["success_fee_ano"] < s[0]["success_fee_ano"]
+    # meta = G0 base e perfil simetrico: cada mes bom so devolve o deficit do mes ruim anterior
+    assert c[0]["success_fee_ano"] == pytest.approx(0.0, abs=1e-9)
+    for x in c:  # cascata media do ano fecha com o success fee apurado
+        pt, r = x["premissas"], x["por_cliente"]["b"]
+        assert r["gerador"] + r["receita"] + pt.fatura_dist + pt.recorrencia_canal == pytest.approx(r["arrecadacao"])
+
+
+def test_success_fee_deficit_acumula_e_zera_no_ano():
+    meses, saldo = am.success_fee_meses([90, 80, 130, 125], [100] * 4, 0.2, carry=True)
+    assert [m["saldo_fim"] for m in meses] == pytest.approx([10, 30, 0, 0])
+    assert [m["sf"] for m in meses] == pytest.approx([0, 0, 0, 0.2 * 25])
+    assert saldo == pytest.approx(0)
+    simples, _ = am.success_fee_meses([90, 80, 130, 125], [100] * 4, 0.2)
+    assert sum(m["sf"] for m in simples) == pytest.approx(0.2 * 55)
+    # deficit no fim do ano: sem zerar, o saldo passa para o ano seguinte; zerando, nao
+    perfil = [0.10] * 11 + [0.30]
+    b = dict(B_, meta=None, carry=True)
+    sem = am.projecao(_p(), 2, 0.6, A_, b, perfil_inad=perfil)
+    com = am.projecao(_p(), 2, 0.6, A_, dict(b, zerar=True), perfil_inad=perfil)
+    assert sem[0]["sf_meses"][-1]["saldo_fim"] > 0
+    assert sem[1]["sf_meses"][0]["saldo_ini"] == pytest.approx(sem[0]["sf_meses"][-1]["saldo_fim"])
+    assert com[1]["sf_meses"][0]["saldo_ini"] == 0
+
+
+# ---------------- comparacao com o arrendamento
+
+@pytest.mark.parametrize("args", [
+    (400.0, 300.0, 0.18, 0.05, 1, 1, 0.5, 0.30, 0.0, 0.0, True),
+    (420.0, 310.0, 0.12, 0.06, 1, 0, 0.0, 0.25, 0.20, 150.0, True),
+    (500.0, 280.0, 0.20, 0.04, 0, 1, 0.7, 0.35, 0.10, 120.0, False),
+])
+def test_arrendamento_porte_igual_ao_painel(args):
+    import monitor_tarifas as mt
+    a = am.arrendamento_mwh(*args)
+    b = mt.calc_arrendamento(*args)
+    for k in ("U", "W_I", "Y", "V", "custo_fb", "dono", "thopen", "desconto", "margem", "preco_kwh", "desagio_impl"):
+        assert a[k] == pytest.approx(b[k]), k
+    assert a["cliente_paga"] == pytest.approx(b["dono"] + b["margem"])
+    assert am.desagio_por_preco_arr(a, 0.40) == pytest.approx(mt.desagio_por_preco(b, 0.40))
+
+
+@pytest.mark.parametrize("preco", [None, 0.42])
+def test_arrendamento_projecao_igual_ao_painel(preco):
+    import monitor_tarifas as mt
+    tar = {"tusd": 400.0, "te": 300.0, "icms": 0.18, "pc": 0.05, "flag_te": 1, "flag_tusd": 1, "fio_b_scee": 200.0}
+    anos = 5
+    pfb = [mt.escalonamento_ano(2026 + t) for t in range(anos)]
+    p = _p(clientes=1000, ocupacao=1.0, inadimplencia=0.0, recorrencia_canal=0.0, custo_operacao=0.0, ga=0.0,
+           fatura_dist=0.0, impostos=0.0)
+    q = 1000 * 300 / 1000.0  # MWh/mes = 1000 clientes x 300 kWh
+    pr = am.projecao_arrendamento_asset(p, anos, tar, pfb, 300.0, s=0.4, c=0.1, d=0.3, preco_kwh=preco,
+                                        reaj_tarifa=0.05, q_usina_mes=q)
+    ref = mt.projecao_arrendamento(400.0, 300.0, 0.18, 0.05, 1, 1, 0.4, 0.3, 0.1, 200.0, 2, True, q, anos, 2026, 0.05,
+                                   0.0, 0.12, fixar="preco" if preco is not None else "d", preco_kwh=preco)
+    for x, y in zip(pr, ref["anos"]):
+        assert x["gerador"] == pytest.approx(y["dono"])
+        assert x["margem_painel"] == pytest.approx(y["margem"])
+        assert x["d"] == pytest.approx(y["d"])
+        # sem custos, sem inadimplencia e sem vacancia, o resultado comparavel = margem do painel
+        assert x["thopen"] == pytest.approx(y["margem"])
+
+
+def test_arrendamento_vacancia_e_inadimplencia_com_a_thopen():
+    tar = {"tusd": 400.0, "te": 300.0, "icms": 0.18, "pc": 0.05, "flag_te": 1, "flag_tusd": 1, "fio_b_scee": 0.0}
+    base = dict(s=0.0, c=0.15, d=0.3, q_usina_mes=300.0)
+    cheio = am.projecao_arrendamento_asset(_p(clientes=1000, ocupacao=1.0), 1, tar, [0.0], 300.0, **base)[0]
+    vago = am.projecao_arrendamento_asset(_p(clientes=1000, ocupacao=0.8), 1, tar, [0.0], 300.0, **base)[0]
+    assert vago["gerador"] == pytest.approx(cheio["gerador"])         # dono recebe pela usina inteira
+    assert vago["thopen"] < cheio["thopen"]
+    inad = am.projecao_arrendamento_asset(_p(clientes=1000, inadimplencia=0.2), 1, tar, [0.0], 300.0, **base)[0]
+    assert inad["gerador"] == pytest.approx(cheio["gerador"]) and inad["thopen"] < cheio["thopen"]
+
+
+# ---------------- pagina: novos blocos, cenario versao 4 e trava do PDF ao gerador
+
+def test_pagina_novos_blocos_e_cenario_v4():
+    h = _html()
+    for t in ("Cálculo reverso do fee", "Comparação com o arrendamento", "Apuração do success fee", "Base do fee fixo",
+              'id="s-reverso"', 'id="s-arr"', 'id="s-sf"', "zerar saldo a cada ano", "versao: 4",
+              "independente da ocupação", '"Cálculo reverso"', '"Comparação arrendamento"', '"Success fee mensal"'):
+        assert t in h, t
+    campos = re.search(r"var CAMPOS = \[(.*?)\];", h, re.S).group(1)
+    for k in ("f-bfa", "f-bfb", "f-sfmodo", "f-sfperfil", "f-sfpp", "f-rv-m", "f-rv-unid", "f-rv-ocup", "f-arr-modo",
+              "f-arr-d", "f-arr-p", "f-arr-s", "f-arr-c", "f-arr-fb"):
+        assert '"' + k + '"' in campos, k
+    # carregador de cenarios antigos (versoes 1 a 3): campo ausente = vazio ou o padrao do select; checkbox opcional
+    sel = re.search(r"var SEL = \{(.*?)\};", h, re.S).group(1)
+    for k in ("f-bfa", "f-bfb", "f-sfmodo", "f-rv-unid", "f-arr-modo", "f-arr-fb"):
+        assert '"' + k + '"' in sel, k
+    assert 'o && o[id] != null ? String(o[id]) : ""' in h
+    assert '$("f-sfzera").checked = !!(o && o["f-sfzera"]);' in h
+    assert "aplica(o && o.campos ? o.campos : o)" in h
+
+
+def test_pdf_gerador_bloqueia_arrendamento_e_reverso():
+    h = _html()
+    rx = re.compile(re.search(r"var GER_PROIBIDO = /(.+?)/i;", h).group(1), re.I)
+    for termo in ("Comparação com o arrendamento", "Cálculo reverso do fee", "arrendamento"):
+        assert rx.search(termo), termo
+    for termo in ("fee fixo devido sobre a capacidade contratada da usina, independente da ocupação",
+                  "saldo acumulado", "Apuração do success fee"):
+        assert not rx.search(termo), termo
+    campos = re.search(r"var GER_CAMPOS = \[(.*?)\];", h, re.S).group(1)
+    assert '"sfApuracao"' in campos and '"sfSens"' in campos
+    assert '"arr' not in campos and '"reverso' not in campos
