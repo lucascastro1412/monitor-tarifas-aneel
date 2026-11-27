@@ -36,6 +36,11 @@ legend{font-size:12.5px;font-weight:600;color:var(--azul);padding:0 6px}
 .campos label.chk{flex-direction:row;align-items:center;gap:6px}
 .campos input[type=text],.campos input[type=date]{width:150px;max-width:100%;padding:7px 9px;border:1px solid var(--borda);border-radius:7px;font:inherit;font-variant-numeric:tabular-nums}
 .campos input.largo{width:240px}
+.campos select{min-width:150px;max-width:100%;padding:6px 8px;border:1px solid var(--borda);border-radius:7px;font:inherit;background:#fff}
+.campos select.largo{min-width:240px}
+.caixa{margin-top:10px;font-size:12.5px}
+.caixa table{font-size:12px}
+.caixa .mut{margin:4px 0}
 .campos input.falta{border-color:var(--vermelho);background:#FFF6F5}
 .campos input:disabled{background:#F1F3F7}
 .ajuda{font-size:11px;color:var(--suave)}
@@ -81,6 +86,8 @@ td.atual{outline:2px solid var(--azul);outline-offset:-2px;font-weight:700}
     <a href="#s-quadro">Quadro</a>
     <a href="#s-be">Break-even</a>
     <a href="#s-sens">Sensibilidade</a>
+    <a href="#s-proj">Projeção</a>
+    <a href="#s-prazos">Cenários de prazo</a>
     <a href="#s-vale">Vale a pena?</a>
     <a href="#s-clausulas">Cláusulas</a>
     <a href="#s-objecoes">Objeções</a>
@@ -100,10 +107,24 @@ td.atual{outline:2px solid var(--azul);outline-offset:-2px;font-weight:700}
   <div class="grid tres">
     <fieldset><legend>Usina</legend><div class="campos">
       <label>Usina / gerador<input type="text" id="f-usina" class="largo" value="" autocomplete="off"></label>
-      <label>Distribuidora<input type="text" id="f-dist" value="" autocomplete="off"></label>
-      <label>Capacidade (clientes)<input type="text" id="f-n" inputmode="decimal" value=""><span class="ajuda">opcional: totais da usina</span></label>
+      <label>Distribuidora (texto)<input type="text" id="f-dist" value="" autocomplete="off"><span class="ajuda">preenchida pela lista ao lado ou à mão</span></label>
+      <label>Capacidade (clientes)<input type="text" id="f-n" inputmode="decimal" value=""><span class="ajuda">opcional: totais da usina; calculada pela capacidade de geração</span></label>
       <label>Data<input type="date" id="f-data" value=""></label>
     </div></fieldset>
+    <fieldset><legend>Distribuidora e tarifa (dados públicos ANEEL)</legend><div class="campos">
+      <label>Distribuidora (lista do painel)<select id="f-dist-sel" class="largo"><option value="">manual (sem tarifa do painel)</option></select></label>
+      <label>Modalidade GD<select id="f-gd"><option value="I">GD I</option><option value="II" selected>GD II</option><option value="III">GD III</option></select></label>
+      <label>Ano de início<input type="text" id="f-ano" inputmode="numeric" value=""><span class="ajuda" id="h-ano">vazio = ano atual</span></label>
+      <label>Base da tarifa compensável<select id="f-base"><option value="c" selected>valor compensado (padrão)</option><option value="v">tarifa com impostos</option><option value="m">manual</option></select></label>
+    </div><div id="tar-box" class="caixa"></div></fieldset>
+    <fieldset><legend>Capacidade de geração da usina</legend><div class="campos">
+      <label>Potência<input type="text" id="f-pot" inputmode="decimal" value=""></label>
+      <label>Unidade<select id="f-unid"><option value="kwp" selected>kWp</option><option value="mwp">MWp</option></select></label>
+      <label>Produtividade (kWh/kWp/ano)<input type="text" id="f-prod" inputmode="decimal" value=""><span class="ajuda" id="h-prod">vazio = padrão da UF</span></label>
+      <label>ou geração média direta (MWh/mês)<input type="text" id="f-ger" inputmode="decimal" value=""><span class="ajuda">substitui potência x produtividade</span></label>
+      <label>Geração compensada (%)<input type="text" id="f-pcomp" inputmode="decimal" value=""><span class="ajuda">vazio = 100%</span></label>
+      <label>Degradação anual (% a.a.)<input type="text" id="f-degr" inputmode="decimal" value=""><span class="ajuda">vazio = 0</span></label>
+    </div><div id="cap-box" class="caixa"></div></fieldset>
     <fieldset><legend>Energia e cobrança</legend><div class="campos">
       <label>Consumo médio (kWh/cliente/mês)<input type="text" id="f-consumo" inputmode="decimal" value=""><span class="ajuda">opcional: preenche o crédito</span></label>
       <label>Tarifa compensável (R$/kWh)<input type="text" id="f-tarifa" inputmode="decimal" value=""></label>
@@ -141,11 +162,22 @@ td.atual{outline:2px solid var(--azul);outline-offset:-2px;font-weight:700}
       <label>Régua de cobrança<input type="text" id="f-regua" class="largo" value="" placeholder="ex.: SMS D+3, e-mail D+7, ligação D+15"></label>
       <label>Ocupação mínima contratual (%)<input type="text" id="f-ocmin" inputmode="decimal" value=""><span class="ajuda">vazio = calculada por proposta</span></label>
     </div></fieldset>
+    <fieldset><legend>Prazo do contrato e reajustes</legend><div class="campos">
+      <label>Prazo do contrato (anos)<input type="text" id="f-prazo" inputmode="numeric" value=""><span class="ajuda">vazio = maior prazo da lista</span></label>
+      <label>Prazos para comparar (anos)<input type="text" id="f-prazos" value="" placeholder="5;10;15"><span class="ajuda">separados por ponto e vírgula; vazio = 5;10;15</span></label>
+      <label>Reajuste anual da tarifa (% a.a.)<input type="text" id="f-reaj" inputmode="decimal" value=""><span class="ajuda" id="h-reaj">vazio = IPCA 12 meses</span></label>
+      <label>Reajuste do fee fixo, recorrência e custos (% a.a.)<input type="text" id="f-reajc" inputmode="decimal" value=""><span class="ajuda" id="h-reajc">vazio = IPCA 12 meses</span></label>
+      <label>Taxa de desconto para VPL (% a.a.)<input type="text" id="f-taxa" inputmode="decimal" value=""><span class="ajuda">vazio = sem VPL</span></label>
+      <label>Ocupação no ano 1 (%)<input type="text" id="f-ocup1" inputmode="decimal" value=""><span class="ajuda">ramp-up; vazio = ocupação base</span></label>
+    </div></fieldset>
   </div>
   <div id="erros" class="erro" style="margin-top:12px"></div>
   <div class="nota">Fórmulas por cliente ativo: arrecadação = (energia faturada com desconto + fatura da distribuidora) x (1 - inadimplência); fee = % x energia faturada com desconto + fixo;
     Gerador = arrecadação - fatura da distribuidora - recorrência do canal - fee - success fee; resultado da Thopen = receita x (1 - impostos) - custo de operação - G&amp;A / ocupação.
-    O fee é sênior na cascata e incide sobre a energia faturada com desconto, então não varia com a inadimplência.</div>
+    O fee é sênior na cascata e incide sobre a energia faturada com desconto, então não varia com a inadimplência.
+    Projeção por ano: tarifa compensável = base x (1 + reajuste da tarifa)^ano, menos o aumento do Fio B efetivo (GD II e GD III, Lei 14.300: 2026 60%, 2027 75%, 2028 90%, 2029 em diante 100%);
+    fatura da distribuidora e meta do success fee seguem o reajuste da tarifa; fee fixo, recorrência do canal, custo de operação e G&amp;A seguem o reajuste dos custos; capacidade x (1 - degradação)^ano.</div>
+  <div id="tar-nota" class="aviso" style="display:none"></div>
 </section>
 
 <div id="saida">
@@ -179,24 +211,41 @@ td.atual{outline:2px solid var(--azul);outline-offset:-2px;font-weight:700}
   </div>
 </section>
 
+<section id="s-proj" class="card">
+  <h2>5. Projeção por ano</h2>
+  <div id="proj-info" class="mut"></div>
+  <div class="tab"><table id="t-proj"></table></div>
+  <h3>Gerador e Thopen por ano (R$/ano)</h3>
+  <div class="graf" style="height:320px"><canvas id="g-proj"></canvas></div>
+</section>
+
+<section id="s-prazos" class="card">
+  <h2>6. Cenários por prazo do contrato</h2>
+  <h3>Gerador</h3>
+  <div class="tab"><table id="t-prazo-g"></table></div>
+  <h3>Thopen</h3>
+  <div class="tab"><table id="t-prazo-t"></table></div>
+  <div id="prazo-nota" class="nota"></div>
+</section>
+
 <section id="s-vale" class="card">
-  <h2>5. Vale a pena? (análise interna)</h2>
+  <h2>7. Vale a pena? (análise interna)</h2>
   <div id="vale" class="veredito"></div>
 </section>
 
 <section id="s-clausulas" class="card">
-  <h2>6. Cláusulas contratuais essenciais</h2>
+  <h2>8. Cláusulas contratuais essenciais</h2>
   <div id="clausulas" class="clausulas"></div>
 </section>
 
 <section id="s-objecoes" class="card">
-  <h2>7. Objeções do Gerador e respostas</h2>
+  <h2>9. Objeções do Gerador e respostas</h2>
   <div id="objecoes" class="objecoes"></div>
 </section>
 </div>
 
 <section id="s-exp" class="card">
-  <h2>8. Exportar</h2>
+  <h2>10. Exportar</h2>
   <div class="barra">
     <button class="btn pri" id="b-pdf-ger" type="button" title="Só estrutura de fee, resultado do Gerador, sensibilidade do Gerador, comparação com hoje e cláusulas">PDF proposta ao gerador</button>
     <button class="btn" id="b-pdf-int" type="button" title="Tudo, marcado como uso interno">PDF análise interna</button>
@@ -225,7 +274,10 @@ td.atual{outline:2px solid var(--azul);outline-offset:-2px;font-weight:700}
 
   // ---------------- campos
   var CAMPOS = ["f-usina", "f-dist", "f-n", "f-data", "f-consumo", "f-tarifa", "f-credito", "f-desc", "f-fat", "f-df", "f-inad", "f-canal",
-    "f-op", "f-ga", "f-imp", "f-ocup", "f-tr", "f-pa", "f-fa", "f-pb", "f-fb", "f-sig", "f-meta", "f-descmax", "f-sla1", "f-sla2", "f-regua", "f-ocmin"];
+    "f-op", "f-ga", "f-imp", "f-ocup", "f-tr", "f-pa", "f-fa", "f-pb", "f-fb", "f-sig", "f-meta", "f-descmax", "f-sla1", "f-sla2", "f-regua", "f-ocmin",
+    "f-dist-sel", "f-gd", "f-ano", "f-base", "f-pot", "f-unid", "f-prod", "f-ger", "f-pcomp", "f-degr",
+    "f-prazo", "f-prazos", "f-reaj", "f-reajc", "f-taxa", "f-ocup1"];
+  var SEL = {"f-dist-sel": "", "f-gd": "II", "f-base": "c", "f-unid": "kwp"};  // selects e o valor padrao (cenarios antigos nao tem estes campos)
   var ROT = {"f-usina": "Usina / gerador", "f-dist": "Distribuidora", "f-n": "Capacidade (clientes)", "f-data": "Data",
     "f-consumo": "Consumo médio (kWh/cliente/mês)", "f-tarifa": "Tarifa compensável (R$/kWh)", "f-credito": "Crédito de energia compensada bruto",
     "f-desc": "Desconto ao cliente", "f-fat": "Energia faturada com desconto", "f-df": "Fatura da distribuidora repassada ao cliente",
@@ -233,8 +285,13 @@ td.atual{outline:2px solid var(--azul);outline-offset:-2px;font-weight:700}
     "f-imp": "Impostos sobre a receita da Thopen", "f-ocup": "Ocupação", "f-tr": "Take Rate hoje", "f-pa": "Proposta A: fee %", "f-fa": "Proposta A: fee fixo",
     "f-pb": "Proposta B: fee piso %", "f-fb": "Proposta B: fee fixo", "f-sig": "Proposta B: success fee", "f-meta": "Proposta B: meta do Gerador",
     "f-descmax": "Desconto máximo ao cliente", "f-sla1": "SLA: início da cobrança (dias)", "f-sla2": "SLA: negativação (dias)", "f-regua": "Régua de cobrança",
-    "f-ocmin": "Ocupação mínima contratual"};
-  var PCT = {"f-desc": 1, "f-inad": 1, "f-imp": 1, "f-ocup": 1, "f-tr": 1, "f-pa": 1, "f-pb": 1, "f-sig": 1, "f-descmax": 1, "f-ocmin": 1};
+    "f-ocmin": "Ocupação mínima contratual", "f-dist-sel": "Distribuidora (lista do painel)", "f-gd": "Modalidade GD", "f-ano": "Ano de início",
+    "f-base": "Base da tarifa compensável", "f-pot": "Potência", "f-unid": "Unidade da potência", "f-prod": "Produtividade (kWh/kWp/ano)",
+    "f-ger": "Geração média direta (MWh/mês)", "f-pcomp": "Geração compensada", "f-degr": "Degradação anual", "f-prazo": "Prazo do contrato (anos)",
+    "f-prazos": "Prazos para comparar", "f-reaj": "Reajuste anual da tarifa", "f-reajc": "Reajuste do fee fixo, recorrência e custos",
+    "f-taxa": "Taxa de desconto para VPL", "f-ocup1": "Ocupação no ano 1"};
+  var PCT = {"f-desc": 1, "f-inad": 1, "f-imp": 1, "f-ocup": 1, "f-tr": 1, "f-pa": 1, "f-pb": 1, "f-sig": 1, "f-descmax": 1, "f-ocmin": 1,
+    "f-pcomp": 1, "f-degr": 1, "f-reaj": 1, "f-reajc": 1, "f-taxa": 1, "f-ocup1": 1};
 
   function lerNum(s) {
     var t = String(s == null ? "" : s).replace(/R\$|%|\s/g, "");
@@ -246,9 +303,21 @@ td.atual{outline:2px solid var(--azul);outline-offset:-2px;font-weight:700}
   function n(id) { var v = lerNum($(id).value); return v == null || isNaN(v) ? v : (PCT[id] ? v / 100 : v); }
   function txt(id) { return String($(id).value || "").trim(); }
 
-  function estado() { var o = {}; CAMPOS.forEach(function (id) { o[id] = $(id).value; }); o["f-meta-base"] = $("f-meta-base").checked; return o; }
+  var J = null, pendDist = "";  // J = tarifas_asset.json (dados publicos do painel); pendDist = distribuidora salva antes da lista carregar
+  function estado() {
+    var o = {}; CAMPOS.forEach(function (id) { o[id] = $(id).value; });
+    if (!J && pendDist) o["f-dist-sel"] = pendDist;
+    o["f-meta-base"] = $("f-meta-base").checked; return o;
+  }
   function aplica(o) {
-    CAMPOS.forEach(function (id) { $(id).value = o && o[id] != null ? String(o[id]) : ""; });
+    CAMPOS.forEach(function (id) {
+      var v = o && o[id] != null ? String(o[id]) : "";
+      if (id in SEL) {
+        if (id === "f-dist-sel") { pendDist = v; if (J && v && !J.distribuidoras[v]) v = ""; }
+        $(id).value = v || SEL[id];
+        if ($(id).value !== (v || SEL[id]) && id !== "f-dist-sel") $(id).value = SEL[id];
+      } else $(id).value = v;
+    });
     $("f-meta-base").checked = !o || o["f-meta-base"] !== false;
   }
   function grava() { try { localStorage.setItem(CHAVE, JSON.stringify(estado())); } catch (e) {} }
@@ -299,7 +368,26 @@ td.atual{outline:2px solid var(--azul);outline-offset:-2px;font-weight:700}
     if (P.t != null && !(P.t < 1)) reg.push("Impostos devem ser menores que 100%.");
     if (P.i != null && (P.i < 0 || P.i >= 1)) reg.push("Inadimplência deve estar entre 0% e 100%.");
     if (!(P.w > 0 && P.w <= 1)) reg.push("Ocupação deve estar entre 0% e 100%.");
-    return {P: P, falta: falta, inval: inval, reg: reg,
+    // projecao por ano e cenarios de prazo (todos opcionais, com padroes)
+    var ipca = J && J.ipca12 != null ? J.ipca12 : null;
+    var X = {gd: $("f-gd").value, taxa: opc("f-taxa"), w1: opc("f-ocup1"), deg: opc("f-degr"), ipca: ipca};
+    var an = opc("f-ano"), rt = opc("f-reaj"), rc = opc("f-reajc"), pr = opc("f-prazo");
+    X.ano = an != null ? Math.round(an) : (J ? J.ano0 : new Date().getFullYear());
+    X.rtPad = rt == null; X.rcPad = rc == null;
+    X.rt = rt != null ? rt : (ipca != null ? ipca : 0); X.rc = rc != null ? rc : (ipca != null ? ipca : 0);
+    if (X.deg == null) X.deg = 0;
+    var lst = (txt("f-prazos") || "5;10;15").split(/[;,\s]+/).filter(Boolean).map(Number);
+    if (!lst.length || lst.some(function (k) { return !(k >= 1 && k <= 40 && Math.round(k) === k); })) { inval.push("f-prazos"); lst = [5, 10, 15]; }
+    X.prazos = uniq(lst);
+    if (pr != null && !(pr >= 1 && pr <= 40 && Math.round(pr) === pr)) { reg.push("Prazo do contrato: número inteiro de 1 a 40 anos."); pr = null; }
+    X.prazo = pr != null ? pr : X.prazos[X.prazos.length - 1];
+    X.H = Math.max(X.prazo, X.prazos[X.prazos.length - 1]);
+    if (an != null && !(X.ano >= 2000 && X.ano <= 2100)) reg.push("Ano de início deve estar entre 2000 e 2100.");
+    if (X.w1 != null && !(X.w1 > 0 && X.w1 <= 1)) reg.push("Ocupação no ano 1 deve estar entre 0% e 100%.");
+    if (!(X.deg >= 0 && X.deg < 1)) reg.push("Degradação anual deve estar entre 0% e 100%.");
+    if (X.taxa != null && !(X.taxa > -1)) reg.push("Taxa de desconto deve ser maior que -100%.");
+    if (!(X.rt > -1) || !(X.rc > -1)) reg.push("Reajustes devem ser maiores que -100%.");
+    return {P: P, X: X, falta: falta, inval: inval, reg: reg,
       A: {k: "a", nome: "Proposta A", p: pa || 0, f: fa || 0},
       B: {k: "b", nome: "Proposta B", p: pb || 0, f: fb || 0, sig: sig || 0, meta: meta, metaBase: $("f-meta-base").checked}};
   }
@@ -328,12 +416,189 @@ td.atual{outline:2px solid var(--azul);outline-offset:-2px;font-weight:700}
     var SI = inads.map(function (i) { return cens.map(function (c) { return cascata(P, c, {i: i}); }); });
     var SW = ocups.map(function (w) { return cens.map(function (c) { return cascata(P, c, {w: w}); }); });
     var zero = cens.map(function (c) { return cascata(P, c, {i: 0}); });
-    U = {P: P, cens: cens, R: R, inads: inads, ocups: ocups, SI: SI, SW: SW, zero: zero,
-      usina: txt("f-usina"), dist: txt("f-dist"), data: txt("f-data")};
+    U = {P: P, X: L.X, cens: cens, R: R, inads: inads, ocups: ocups, SI: SI, SW: SW, zero: zero,
+      usina: txt("f-usina"), dist: txt("f-dist"), data: txt("f-data"), tar: tarInfo(L.X), cap: capCalc()};
+    U.proj = projeta(U);
     U.vale = vale(U); U.claus = clausulas(U); U.obj = objecoes(U);
     render(U);
   }
   function uniq(a) { var o = []; a.forEach(function (v) { v = Math.round(v * 1e6) / 1e6; if (o.indexOf(v) < 0) o.push(v); }); return o.sort(function (x, y) { return x - y; }); }
+
+  // ---------------- tarifa da distribuidora (tarifas_asset.json, dados publicos do painel), capacidade e projecao
+  var f6 = new Intl.NumberFormat("pt-BR", {minimumFractionDigits: 6, maximumFractionDigits: 6});
+  var f4 = new Intl.NumberFormat("pt-BR", {minimumFractionDigits: 4, maximumFractionDigits: 4});
+  var GDN = {I: "GD I", II: "GD II", III: "GD III"}, NM = ["Hoje", "Proposta A", "Proposta B"];
+  function ok(v) { return v != null && !isNaN(v); }
+  function dataBr(iso) { return iso ? String(iso).slice(0, 10).split("-").reverse().join("/") : "-"; }
+  function mesBr(m) { return m ? String(m).split("-").reverse().join("/") : ""; }
+  function tarDist() { var k = $("f-dist-sel").value; return J && k && J.distribuidoras[k] ? {nome: k, e: J.distribuidoras[k]} : null; }
+  function idxAno(a) { return Math.max(0, Math.min(J.anos.length - 1, a - J.ano0)); }
+  function tarAno(e, gd, a) { var g = e.gd[gd]; if (!g) return null; var i = idxAno(a); return {w: g.w[i], fbe: g.fbe[i], pfb: J.pct_fb[gd][i]}; }
+  function anoAtual() { var a = n("f-ano"); return ok(a) ? Math.round(a) : (J ? J.ano0 : new Date().getFullYear()); }
+  function tarInfo(X) {  // tarifa publica da distribuidora escolhida no ano de inicio (null sem distribuidora da lista)
+    var s = tarDist(); if (!s) return null;
+    return {nome: s.nome, e: s.e, gd: X.gd, ano: X.ano, t: tarAno(s.e, X.gd, X.ano), base: $("f-base").value};
+  }
+  function tarValor(T) {  // R$/kWh que vai para a tarifa compensavel conforme a base escolhida
+    if (!T || T.base === "m") return null;
+    return T.base === "v" ? T.e.v_kwh : (T.t ? T.t.w : null);
+  }
+  function prodPadrao() {
+    var s = tarDist(), uf = s ? s.e.uf : "";
+    if (J && uf && J.produtividade[uf] != null) return {v: J.produtividade[uf], uf: uf};
+    return {v: J ? J.produtividade_padrao : null, uf: ""};
+  }
+  function capCalc() {
+    var pot = n("f-pot"), prod = n("f-prod"), ger = n("f-ger"), pcp = n("f-pcomp"), k = n("f-consumo"), pp = prodPadrao();
+    var kwp = ok(pot) ? pot * ($("f-unid").value === "mwp" ? 1000 : 1) : null;
+    var pr = ok(prod) ? prod : pp.v, direto = ok(ger);
+    var g = direto ? ger : (kwp != null && pr != null ? kwp * pr / 12 / 1000 : null);
+    pcp = ok(pcp) ? pcp : 1;
+    var comp = g != null ? g * pcp : null;
+    var cli = comp != null && ok(k) && k > 0 ? Math.floor(comp * 1000 / k + 1e-9) : null;
+    return {kwp: kwp, pr: pr, prPad: !ok(prod), uf: pp.uf, direto: direto, g: g, pc: pcp, comp: comp, cons: ok(k) && k > 0 ? k : null, cli: cli,
+      deg: ok(n("f-degr")) ? n("f-degr") : 0};
+  }
+  function recalcCredito() {
+    var k = n("f-consumo"), t = n("f-tarifa");
+    if (ok(k) && ok(t)) $("f-credito").value = f2.format(k * t).replace(/\./g, "");
+  }
+  function aplicaTarifa() {  // so quando o usuario muda distribuidora, modalidade, ano ou base (nunca ao carregar um cenario)
+    var s = tarDist(); if (!s) return;
+    $("f-dist").value = s.nome;
+    var v = tarValor(tarInfo({gd: $("f-gd").value, ano: anoAtual()}));
+    if (v == null) return;
+    $("f-tarifa").value = f6.format(v).replace(/\./g, "");
+    recalcCredito();
+  }
+  function aplicaCap() { var C = capCalc(); if (C.cli != null) $("f-n").value = String(C.cli); }
+
+  function tarTabela(T) {
+    var e = T.e, t = T.t, kw = function (v) { return v == null || !isFinite(v) ? "-" : f4.format(v / 1000); };
+    var lin = function (rot, mwh, nota) { return "<tr><td>" + esc(rot) + (nota ? ' <span class="mut">(' + esc(nota) + ")</span>" : "") + '</td><td class="n">' + esc(mwh == null ? "-" : f2.format(mwh)) + '</td><td class="n">' + esc(kw(mwh)) + "</td></tr>"; };
+    var lp = function (rot, v, nota) { return "<tr><td>" + esc(rot) + (nota ? ' <span class="mut">(' + esc(nota) + ")</span>" : "") + '</td><td class="n" colspan="2">' + esc(v) + "</td></tr>"; };
+    var h = lp("Vigência B3", dataBr(e.ini) + " a " + dataBr(e.fim) + (e.reh ? " (" + e.reh + ")" : "")) + lp("UF", e.uf || "-") +
+      lin("TUSD", e.tusd) + lin("TE", e.te) + lin("Tarifa sem impostos", e.tusd + e.te, "TUSD + TE") +
+      lin("Fio B SCEE", e.fio_b_scee, e.fio_b_ini ? "vigência desde " + dataBr(e.fio_b_ini) : "indisponível");
+    if (t) h += lin("Fio B efetivo em " + T.ano, t.fbe, GDN[T.gd] + ": " + pcc(t.pfb) + " do Fio B SCEE, Lei 14.300");
+    h += lp("ICMS", pc(e.icms)) + lp("PIS/COFINS", pc(e.pc)) +
+      lin("Tarifa com impostos", e.v_kwh * 1000, "tarifa sem impostos x fator de impostos");
+    h += t ? lin("Valor compensado " + GDN[T.gd] + " em " + T.ano, t.w * 1000, "(TUSD - Fio B efetivo) x fator TUSD + TE x fator TE")
+      : lp("Valor compensado " + GDN[T.gd], "Fio B SCEE indisponível: use GD I ou a tarifa manual");
+    var nota = "Fator TUSD " + f4.format(e.k_tusd) + ", fator TE " + f4.format(e.k_te) + " (ICMS na compensada: TUSD " + (e.flag_icms_tusd ? "sim" : "não") + ", TE " + (e.flag_icms_te ? "sim" : "não") +
+      "). Mesma conta da calculadora e do Arrendamento do painel; tarifa da vigência atual, sem reajuste até o ano de início." +
+      (T.gd === "III" ? " GD III: só o Fio B é modelado; pela Lei 14.300 a usina paga ainda 40% do Fio A, TFSEE e P&D/EE (valor compensado superestimado)." : "");
+    var v = tarValor(T);
+    return '<div class="tab"><table><thead><tr><th>' + esc(T.nome) + "</th><th>R$/MWh</th><th>R$/kWh</th></tr></thead><tbody>" + h + "</tbody></table></div>" +
+      '<p class="mut">' + esc(nota) + "</p>" + (v != null ? '<p class="mut">Tarifa compensável preenchida: R$ ' + esc(f6.format(v)) + "/kWh (" +
+      (T.base === "v" ? "tarifa com impostos" : "valor compensado") + ").</p>" : '<p class="mut">Base manual: a tarifa compensável não é alterada.</p>');
+  }
+  function capTexto(C) {
+    if (C.g == null) return '<p class="mut">Informe a potência (a produtividade vem da UF) ou a geração média direta para calcular a capacidade em clientes.</p>';
+    var it = ["Geração média: " + f2.format(C.g) + " MWh/mês" + (C.direto ? " (informada)" : " (" + f0.format(C.kwp) + " kWp x " + f0.format(C.pr) + " kWh/kWp/ano / 12 / 1.000" +
+      (C.prPad ? ", produtividade padrão" + (C.uf ? " de " + C.uf : " do painel") : "") + ")"),
+      "Energia compensada: " + f2.format(C.comp) + " MWh/mês (" + f0.format(C.comp * 1000) + " kWh/mês, " + pcc(C.pc) + " da geração)",
+      C.cli != null ? "Capacidade calculada: " + f0.format(C.cli) + " clientes (" + f0.format(C.comp * 1000) + " kWh / " + f0.format(C.cons) + " kWh por cliente, arredondado para baixo)"
+        : "Informe o consumo médio por cliente para calcular a capacidade em clientes."];
+    var nn = n("f-n");
+    if (C.cli != null && ok(nn) && nn !== C.cli) it.push("Capacidade usada no cálculo: " + f0.format(nn) + " clientes (informada à mão).");
+    if (C.deg) it.push("Degradação de " + pc(C.deg) + " a.a.: a capacidade cai a cada ano da projeção.");
+    return "<ul>" + it.map(function (x) { return "<li>" + esc(x) + "</li>"; }).join("") + "</ul>";
+  }
+  function renderAux() {
+    var ip = J && J.ipca12 != null ? "vazio = IPCA 12 meses (" + pc(J.ipca12) + (J.ipca12_ate ? " até " + mesBr(J.ipca12_ate) : "") + ")" : "vazio = 0% (IPCA indisponível)";
+    $("h-reaj").textContent = ip; $("h-reajc").textContent = ip;
+    $("f-reaj").placeholder = $("f-reajc").placeholder = J && J.ipca12 != null ? f2.format(J.ipca12 * 100) : "";
+    $("h-ano").textContent = "vazio = " + (J ? J.ano0 : new Date().getFullYear());
+    var T = tarInfo({gd: $("f-gd").value, ano: anoAtual()});
+    $("tar-box").innerHTML = !J ? "" : (T ? tarTabela(T) : '<p class="mut">Escolha a distribuidora na lista para usar a tarifa pública da ANEEL. Sem ela, a tarifa compensável e o crédito ficam manuais e o Fio B não é escalonado na projeção.</p>');
+    var C = capCalc(), pp = prodPadrao();
+    $("f-prod").placeholder = pp.v != null ? f0.format(pp.v) : "";
+    $("h-prod").textContent = pp.v != null ? "vazio = " + f0.format(pp.v) + (pp.uf ? " (" + pp.uf + ")" : " (padrão do painel)") : "vazio = padrão da UF";
+    $("cap-box").innerHTML = capTexto(C);
+  }
+
+  function fatoresFioB(U) {  // GD II/III: o aumento do Fio B efetivo entre o ano de inicio e cada ano reduz a tarifa compensavel
+    var X = U.X, T = U.tar, temFb = !!(T && T.gd !== "I" && T.t), out = [];
+    var tf = n("f-tarifa"), k = n("f-consumo");
+    var ref = ok(tf) && tf > 0 ? tf : (ok(k) && k > 0 ? U.P.C / k : (T && T.t ? T.t.w : null));
+    for (var t = 0; t < X.H; t++) {
+      var x = T ? tarAno(T.e, T.gd, X.ano + t) : null;
+      if (!temFb) { out.push({f: 1, pfb: x ? x.pfb : null, fbe: x ? x.fbe : null, tk: ref}); continue; }
+      var tk = ref - (T.t.w - x.w);
+      out.push({f: tk / ref, pfb: x.pfb, fbe: x.fbe, tk: tk});
+    }
+    return {ok: temFb, ref: ref, anos: out};
+  }
+  function projeta(U) {
+    var P = U.P, X = U.X, A = U.cens[1], B = U.cens[2], FB = fatoresFioB(U);
+    var dd = 1 - P.F / P.C, anos = [], ac = [[0, 0], [0, 0], [0, 0]];
+    for (var t = 0; t < X.H; t++) {
+      var ft = Math.pow(1 + X.rt, t), fc = Math.pow(1 + X.rc, t), fb = FB.anos[t], C = P.C * fb.f * ft;
+      var Pt = Object.assign({}, P, {C: C, F: C * (1 - dd), Df: P.Df * ft, Rc: P.Rc * fc, o: P.o * fc, g: P.g * fc,
+        w: t === 0 && X.w1 != null ? X.w1 : P.w, N: P.N ? Math.floor(P.N * Math.pow(1 - X.deg, t) + 1e-9) : null});
+      var cs = [{k: "hoje", tau: P.tau}, {k: "a", p: A.p, f: A.f * fc}, {k: "b", p: B.p, f: B.f * fc, sig: B.sig, meta: (B.meta || 0) * ft}];
+      var R = cs.map(function (c) { return cascata(Pt, c); }), at = Pt.N ? Pt.N * Pt.w : 1;
+      var lin = {t: t, ano: X.ano + t, pfb: fb.pfb, fbe: fb.fbe, tarifa: fb.tk != null ? fb.tk * ft : null, C: C, N: Pt.N, w: Pt.w, ativos: at, R: R, meta: (B.meta || 0) * ft,
+        ger: R.map(function (r) { return r.gerador * at * 12; }), th: R.map(function (r) { return r.thopen * at * 12; }),
+        rec: R.map(function (r) { return r.receita * at * 12; })};
+      lin.acG = lin.ger.map(function (v, j) { ac[j][0] += v; return ac[j][0]; });
+      lin.acT = lin.th.map(function (v, j) { ac[j][1] += v; return ac[j][1]; });
+      anos.push(lin);
+    }
+    var soma = function (k, j, m, tx) { var s = 0; for (var q = 0; q < m; q++) s += anos[q][k][j] / (tx == null ? 1 : Math.pow(1 + tx, q + 1)); return s; };
+    var res = function (m) {
+      var o = {k: m};
+      ["ger", "th", "rec"].forEach(function (c) { o[c] = [0, 1, 2].map(function (j) { return {tot: soma(c, j, m), vpl: X.taxa == null ? null : soma(c, j, m, X.taxa)}; }); });
+      return o;
+    };
+    return {anos: anos, fioB: FB.ok, prazos: X.prazos.map(res), principal: res(X.prazo), porCliente: !P.N};
+  }
+  function primeiroNeg(U, j, campo) { var a = U.proj.anos; for (var t = 0; t < U.X.prazo; t++) if (a[t].R[j][campo] < 0) return a[t]; return null; }
+  function projTexto(U) {
+    var X = U.X, T = U.tar, ipc = function (v, pad) { return pc(v) + " a.a." + (pad ? (X.ipca != null ? " (IPCA 12 meses)" : " (IPCA indisponível)") : ""); };
+    return "Prazo de " + X.prazo + " anos a partir de " + X.ano + ". Reajuste da tarifa " + ipc(X.rt, X.rtPad) + "; fee fixo, recorrência do canal e custos " + ipc(X.rc, X.rcPad) +
+      ". A meta do success fee da Proposta B segue o reajuste da tarifa. " +
+      (U.proj.fioB ? GDN[T.gd] + " em " + T.nome + ": o Fio B efetivo sobe pela Lei 14.300 e reduz a tarifa compensável." :
+        T ? (T.gd === "I" ? "GD I: sem Fio B, a tarifa só segue o reajuste." : "Fio B SCEE indisponível: a tarifa só segue o reajuste.") :
+        "Sem distribuidora da lista: o Fio B não é escalonado; a tarifa só segue o reajuste.") +
+      (X.deg ? " Degradação de " + pc(X.deg) + " a.a. na capacidade." : "") + (X.w1 != null ? " Ocupação de " + pcc(X.w1) + " no ano 1." : "") +
+      (U.proj.porCliente ? " Sem capacidade da usina: valores por cliente ativo por ano." : " Valores da usina em R$ por ano.");
+  }
+  function renderProj(U) {
+    var X = U.X, PJ = U.proj, a = PJ.anos.slice(0, X.prazo), tot = PJ.principal;
+    $("proj-info").textContent = projTexto(U);
+    var cab = ["Ano", "% Fio B", "Tarifa compensável (R$/kWh)", "Crédito bruto (R$/cliente/mês)", "Clientes ativos"]
+      .concat(NM.map(function (x) { return "Gerador: " + x; }), ["Gerador A - Hoje", "Gerador B - Hoje"], NM.map(function (x) { return "Thopen: " + x; }),
+        ["Receita da Thopen: A", "Receita da Thopen: B", "Gerador acumulado: A", "Gerador acumulado: B", "Thopen acumulado: A", "Thopen acumulado: B"]);
+    var h = "<thead><tr>" + cab.map(function (c) { return "<th>" + esc(c) + "</th>"; }).join("") + "</tr></thead><tbody>";
+    a.forEach(function (l) {
+      h += "<tr><td>" + l.ano + '</td><td class="n">' + esc(l.pfb == null ? "-" : pcc(l.pfb)) + '</td><td class="n">' + esc(l.tarifa == null ? "-" : f4.format(l.tarifa)) + "</td>" +
+        cel(l.C, brl) + '<td class="n">' + esc(PJ.porCliente ? "por cliente" : f1.format(l.ativos)) + "</td>" +
+        l.ger.map(function (v) { return cel(v, brl, 1); }).join("") + cel(l.ger[1] - l.ger[0], brlS, 1) + cel(l.ger[2] - l.ger[0], brlS, 1) +
+        l.th.map(function (v) { return cel(v, brlS, 1); }).join("") + cel(l.rec[1], brl) + cel(l.rec[2], brl) +
+        cel(l.acG[1], brl, 1) + cel(l.acG[2], brl, 1) + cel(l.acT[1], brlS, 1) + cel(l.acT[2], brlS, 1) + "</tr>";
+    });
+    var linTot = function (rot, k) {
+      return '<tr class="tot"><td>' + esc(rot) + "</td><td></td><td></td><td></td><td></td>" + tot.ger.map(function (x) { return cel(x[k], brl, 1); }).join("") +
+        cel(tot.ger[1][k] - tot.ger[0][k], brlS, 1) + cel(tot.ger[2][k] - tot.ger[0][k], brlS, 1) + tot.th.map(function (x) { return cel(x[k], brlS, 1); }).join("") +
+        cel(tot.rec[1][k], brl) + cel(tot.rec[2][k], brl) + "<td></td><td></td><td></td><td></td></tr>";
+    };
+    h += linTot("Total " + X.prazo + " anos", "tot") + (X.taxa != null ? linTot("VPL a " + pc(X.taxa) + " a.a.", "vpl") : "");
+    $("t-proj").innerHTML = h + "</tbody>";
+    var cabP = function (pre) { return "<thead><tr><th>Prazo</th>" + NM.map(function (x) { return "<th>Total: " + esc(x) + "</th>"; }).join("") +
+      NM.map(function (x) { return "<th>VPL: " + esc(x) + "</th>"; }).join("") + pre + "</tr></thead><tbody>"; };
+    var vp = function (x) { return X.taxa == null ? '<td class="n">-</td>' : cel(x.vpl, brlS, 1); };
+    var vpG = function (x) { return X.taxa == null ? '<td class="n">-</td>' : cel(x.vpl, brl, 1); };
+    $("t-prazo-g").innerHTML = cabP("<th>Total A - Hoje</th><th>Total B - Hoje</th>") + PJ.prazos.map(function (p) {
+      return "<tr><td" + (p.k === X.prazo ? ' class="atual"' : "") + ">" + p.k + " anos</td>" + p.ger.map(function (x) { return cel(x.tot, brl, 1); }).join("") + p.ger.map(vpG).join("") +
+        cel(p.ger[1].tot - p.ger[0].tot, brlS, 1) + cel(p.ger[2].tot - p.ger[0].tot, brlS, 1) + "</tr>"; }).join("") + "</tbody>";
+    $("t-prazo-t").innerHTML = cabP("<th>Receita total: A</th><th>Receita total: B</th>") + PJ.prazos.map(function (p) {
+      return "<tr><td" + (p.k === X.prazo ? ' class="atual"' : "") + ">" + p.k + " anos</td>" + p.th.map(function (x) { return cel(x.tot, brlS, 1); }).join("") + p.th.map(vp).join("") +
+        cel(p.rec[1].tot, brl) + cel(p.rec[2].tot, brl) + "</tr>"; }).join("") + "</tbody>";
+    $("prazo-nota").textContent = (X.taxa != null ? "VPL a " + pc(X.taxa) + " a.a., fluxos anuais no fim de cada ano. " : "Informe a taxa de desconto para ver o VPL. ") +
+      (PJ.porCliente ? "Sem capacidade da usina: valores por cliente ativo." : "Valores da usina em R$.");
+  }
 
   // ---------------- textos (veredito, clausulas, objecoes)
   function minOc(U, j) {  // ocupacao minima contratual para a proposta j (1 = A, 2 = B)
@@ -361,10 +626,21 @@ td.atual{outline:2px solid var(--azul);outline-offset:-2px;font-weight:700}
       mot.push("Gerador: " + brl(r.gerador) + " por cliente/mês, " + pcS(r.varG) + " vs hoje (" + brl(U.R[0].gerador) + ").");
       if (c.k === "a") mot.push("Fee não varia com a inadimplência: o resultado da Thopen é o mesmo de " + pcc(U.inads[0]) + " a " + pcc(U.inads[U.inads.length - 1]) + ".");
       else mot.push("Upside com inadimplência 0%: success fee de " + brl(z.sf) + ", Thopen " + brlS(z.thopen) + ", Gerador " + brl(z.gerador) + " (antes do success fee " + brl(z.g0) + ").");
-      var alerta = null;
+      U.X.prazos.forEach(function (k, q) {
+        var pz = U.proj.prazos[q], th = pz.th[j], g = pz.ger[j], g0 = pz.ger[0];
+        mot.push("Prazo de " + k + " anos: Thopen " + (U.X.taxa != null ? "VPL " + brlS(th.vpl) + " (total " + brlS(th.tot) + ")" : "total " + brlS(th.tot)) +
+          "; Gerador " + (U.X.taxa != null ? "VPL " + brl(g.vpl) : "total " + brl(g.tot)) + ", " + brlS(g.tot - g0.tot) + " vs hoje no total.");
+      });
+      var nt = primeiroNeg(U, j, "thopen"), ng = primeiroNeg(U, j, "gerador");
+      var porFb = function (l) { return U.proj.fioB && l.t > 0 ? " (o escalonamento do Fio B reduz a tarifa compensável)" : ""; };
+      var alProj = [];
+      if (nt) alProj.push("Resultado da Thopen negativo a partir de " + nt.ano + " (" + brlS(nt.R[j].thopen) + " por cliente ativo/mês)" + porFb(nt) + ".");
+      if (ng) alProj.push("Repasse ao Gerador negativo a partir de " + ng.ano + " (" + brlS(ng.R[j].gerador) + " por cliente/mês)" + porFb(ng) + ".");
+      if (alProj.length && st === "ok") st = "med";
+      var alerta = alProj.length ? alProj.join(" ") : null;
       if (neg) {
         var x = minOc(U, j);
-        alerta = "Com ocupação de " + pcc(neg.w) + " a " + c.nome + " fica negativa (" + brlS(neg.v) + "): considerar fee fixo por UC sobre a capacidade da usina" +
+        alerta = (alerta ? alerta + " " : "") + "Com ocupação de " + pcc(neg.w) + " a " + c.nome + " fica negativa (" + brlS(neg.v) + "): considerar fee fixo por UC sobre a capacidade da usina" +
           (x != null && x <= 1 ? " ou cláusula de ocupação mínima de " + pcc(x) + "." : ".");
       }
       out.itens.push({k: c.k, nome: c.nome, st: st, selo: {ok: "Viável", med: "Viável com ressalvas", ruim: "Não fecha"}[st], mot: mot, alerta: alerta,
@@ -376,6 +652,9 @@ td.atual{outline:2px solid var(--azul);outline-offset:-2px;font-weight:700}
       "; ocupação de equilíbrio: A " + (ra.ocs == null ? "não fecha" : pc(ra.ocs)) + " x B " + (rb.ocs == null ? "não fecha" : pc(rb.ocs)) + ".");
     out.ranking.push("Para o Gerador: " + (ra.gerador >= rb.gerador ? "Proposta A" : "Proposta B") + " paga mais na base (A " + brl(ra.gerador) + " x B " + brl(rb.gerador) +
       "); com inadimplência 0% a B divide o ganho (Gerador " + brl(U.zero[2].gerador) + ").");
+    var pzP = U.proj.principal, vk = U.X.taxa != null ? "vpl" : "tot", vr = U.X.taxa != null ? "VPL" : "total";
+    out.ranking.push("No prazo de " + U.X.prazo + " anos (" + vr + "): Thopen A " + brlS(pzP.th[1][vk]) + " x B " + brlS(pzP.th[2][vk]) + " x hoje " + brlS(pzP.th[0][vk]) +
+      "; Gerador A " + brl(pzP.ger[1][vk]) + " x B " + brl(pzP.ger[2][vk]) + " x hoje " + brl(pzP.ger[0][vk]) + ".");
     out.melhor = it[0].k;
     var h = U.R[0], hz = U.zero[0];
     out.hoje = "Hoje (Take Rate " + pcc(P.tau) + "): receita da Thopen " + brlS(h.receita) + " e resultado " + brlS(h.thopen) + " por cliente ativo/mês na base; com inadimplência 0%: receita " +
@@ -400,6 +679,10 @@ td.atual{outline:2px solid var(--azul);outline-offset:-2px;font-weight:700}
       " do excedente acima da meta. Sugestão: meses abaixo da meta acumulam o déficit (carry-forward), que é compensado antes de novo success fee."});
     L.push({tit: "Ocupação e vacância", txt: "Proposta A: fee fixo de " + brl(A.f) + " por UC sobre a capacidade da usina" + (P.N ? " (" + f0.format(P.N) + " UCs)" : "") + " ou " + oc(xa) +
       ". Proposta B: fee fixo de " + brl(B.f) + " por UC sobre a capacidade ou " + oc(xb) + "."});
+    var X = U.X, dbase = U.data ? U.data.split("-").reverse().join("/") : "data de assinatura do contrato";
+    L.push({tit: "Prazo, reajuste e data-base", txt: "Prazo de " + X.prazo + " anos a partir de " + X.ano + ". O fee fixo por UC é reajustado anualmente pelo " +
+      (X.rcPad ? "IPCA" : "índice contratual") + " (premissa da projeção: " + pc(X.rc) + " a.a.), com data-base em " + dbase +
+      ". A meta do success fee da Proposta B é reajustada pelo reajuste da tarifa da distribuidora (premissa: " + pc(X.rt) + " a.a.). O fee percentual acompanha a energia faturada com desconto e não precisa de reajuste."});
     L.push({tit: "Relatório mensal e auditoria", txt: "Relatório mensal por usina com energia compensada, faturamento, descontos, arrecadação, inadimplência, fatura da distribuidora, recorrência do canal, fee e repasse. O Gerador pode auditar a apuração uma vez por ano, com aviso prévio."});
     L.push({tit: "Conta segregada da ACER por usina", txt: "Recebimentos de cada usina em conta segregada (escrow) da ACER, com a cascata de pagamentos executada a partir dela e extrato disponível ao Gerador."});
     return L;
@@ -471,6 +754,7 @@ td.atual{outline:2px solid var(--azul);outline-offset:-2px;font-weight:700}
     var gU = P.N ? " por usina (R$/mês)" : " por cliente";
     $("t-sens-i").innerHTML = sensTab("Inadimplência", U.inads, U.SI, P.i, function (r) { return r.gerador; }, " por cliente");
     $("t-sens-w").innerHTML = sensTab("Ocupação", U.ocups, U.SW, P.w, function (r) { return P.N ? r.gerador * r.tot : r.gerador; }, gU);
+    renderProj(U);
     graficos(U);
 
     // vale a pena
@@ -521,15 +805,25 @@ td.atual{outline:2px solid var(--azul);outline-offset:-2px;font-weight:700}
     mk("g-ti", U.inads, U.SI, function (r) { return r.thopen; });
     mk("g-tw", U.ocups, U.SW, function (r) { return r.thopen; });
     mk("g-gi", U.inads, U.SI, function (r) { return r.gerador; });
+    var a = U.proj.anos.slice(0, U.X.prazo), ds = [];
+    NM.forEach(function (x, j) {
+      ds.push({label: "Gerador: " + x, data: a.map(function (l) { return Math.round(l.ger[j]); }), borderColor: CORES[j], backgroundColor: CORES[j], tension: 0, pointRadius: 2});
+      ds.push({label: "Thopen: " + x, data: a.map(function (l) { return Math.round(l.th[j]); }), borderColor: CORES[j], backgroundColor: CORES[j], borderDash: [6, 4], tension: 0, pointRadius: 2});
+    });
+    if (GR["g-proj"]) GR["g-proj"].destroy();
+    GR["g-proj"] = new Chart($("g-proj"), {type: "line", data: {labels: a.map(function (l) { return String(l.ano); }), datasets: ds},
+      options: {responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: {legend: {position: "bottom"}, tooltip: {callbacks: {label: function (c) { return c.dataset.label + ": " + brl(c.parsed.y); }}}},
+        scales: {y: {ticks: {callback: function (v) { return "R$ " + f0.format(v); }}, grid: {color: function (c) { return c.tick && c.tick.value === 0 ? "#C0392B" : "#EDF0F5"; }}}}}});
   }
 
   // ---------------- exportacao
   var XLSX_URL = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js", xlsxCarga = null;
-  var FMT = {brl: '"R$" #,##0.00', pct: "0.00%", n2: "#,##0.00", int: "#,##0"};
+  var FMT = {brl: '"R$" #,##0.00', pct: "0.00%", n2: "#,##0.00", n4: "#,##0.0000", int: "#,##0"};
   function N(v, t) { return v == null || !isFinite(v) ? "-" : {v: +v, t: t || "brl"}; }
   function cTxt(c) {
     if (c == null) return ""; if (typeof c !== "object") return String(c);
-    return c.t === "pct" ? pc(c.v) : c.t === "int" ? f0.format(c.v) : c.t === "n2" ? f2.format(c.v) : brl(c.v);
+    return c.t === "pct" ? pc(c.v) : c.t === "int" ? f0.format(c.v) : c.t === "n2" ? f2.format(c.v) : c.t === "n4" ? f4.format(c.v) : brl(c.v);
   }
   function identif(U) { return [["Usina / gerador", U.usina || "-"], ["Distribuidora", U.dist || "-"], ["Data", U.data ? U.data.split("-").reverse().join("/") : "-"]]; }
 
@@ -541,7 +835,11 @@ td.atual{outline:2px solid var(--azul);outline-offset:-2px;font-weight:700}
       ["Custo de operação do cliente", N(P.o)], ["G&A por cliente a 100% de ocupação", N(P.g)], ["Impostos sobre a receita da Thopen", N(P.t, "pct")], ["Ocupação", N(P.w, "pct")],
       ["Take Rate hoje", N(P.tau, "pct")], ["Proposta A: fee %", N(U.cens[1].p, "pct")], ["Proposta A: fee fixo", N(U.cens[1].f)], ["Proposta B: fee piso %", N(U.cens[2].p, "pct")],
       ["Proposta B: fee fixo", N(U.cens[2].f)], ["Proposta B: success fee", N(U.cens[2].sig, "pct")], ["Proposta B: meta do Gerador", N(U.cens[2].meta)],
-      ["Meta", U.cens[2].metaBase ? "resultado do Gerador no cenário base" : "informada"]]);
+      ["Meta", U.cens[2].metaBase ? "resultado do Gerador no cenário base" : "informada"],
+      ["Prazo do contrato (anos)", N(U.X.prazo, "int")], ["Prazos comparados (anos)", U.X.prazos.join("; ")], ["Ano de início", String(U.X.ano)],
+      ["Reajuste anual da tarifa", N(U.X.rt, "pct")], ["Reajuste do fee fixo, recorrência e custos", N(U.X.rc, "pct")],
+      ["Taxa de desconto para VPL", U.X.taxa == null ? "-" : N(U.X.taxa, "pct")], ["Ocupação no ano 1", U.X.w1 == null ? "-" : N(U.X.w1, "pct")],
+      ["Degradação anual", N(U.X.deg, "pct")]]);
     S.push({nome: "Premissas", tit: "Premissas (R$ por cliente por mês)", blocos: [{cab: ["Premissa", "Valor"], linhas: pr,
       nota: "Fee = % x energia faturada com desconto + fixo; arrecadação = (energia faturada com desconto + fatura da distribuidora) x (1 - inadimplência); resultado da Thopen = receita x (1 - impostos) - custo de operação - G&A / ocupação."}]});
     var q = [];
@@ -568,6 +866,30 @@ td.atual{outline:2px solid var(--azul);outline-offset:-2px;font-weight:700}
     S.push({nome: "Sensibilidade", tit: "Sensibilidade (resultado da Thopen por cliente ativo; Gerador)", blocos: [
       {tit: "Inadimplência", cab: cabS("Inadimplência", " por cliente"), linhas: sens(U.inads, U.SI, function (r) { return r.gerador; })},
       {tit: "Ocupação", cab: cabS("Ocupação", P.N ? " por usina R$/mês" : " por cliente"), linhas: sens(U.ocups, U.SW, function (r) { return P.N ? r.gerador * r.tot : r.gerador; })}]});
+    var tl = tarLinhas(U, false), cl = capLinhas(U);
+    S.push({nome: "Usina e tarifa", tit: "Usina e tarifa da distribuidora", blocos: [
+      {tit: "Tarifa (dados públicos ANEEL)", cab: ["Item", "Valor"], linhas: tl.length ? tl : [["Distribuidora", "sem distribuidora da lista (tarifa manual)"]]},
+      {tit: "Capacidade de geração", cab: ["Item", "Valor"], linhas: cl.length ? cl : [["Capacidade", "não informada"]],
+        nota: "Valor compensado GD II/III = (TUSD - Fio B efetivo) x fator TUSD + TE x fator TE; GD I sem Fio B. Capacidade = energia compensada / consumo médio por cliente, arredondada para baixo."}]});
+    var pj = U.proj, cabPj = ["Ano", "% Fio B", "Tarifa compensável (R$/kWh)", "Crédito bruto (R$/cliente/mês)", "Clientes ativos"]
+      .concat(NM.map(function (x) { return "Gerador: " + x; }), ["Gerador A - Hoje", "Gerador B - Hoje"], NM.map(function (x) { return "Thopen: " + x; }),
+        ["Receita da Thopen: A", "Receita da Thopen: B", "Gerador acumulado: A", "Gerador acumulado: B", "Thopen acumulado: A", "Thopen acumulado: B"]);
+    var linPj = pj.anos.slice(0, U.X.prazo).map(function (l) {
+      return [String(l.ano), l.pfb == null ? "-" : N(l.pfb, "pct"), l.tarifa == null ? "-" : N(l.tarifa, "n4"), N(l.C), pj.porCliente ? "por cliente" : N(l.ativos, "n2")]
+        .concat(l.ger.map(function (v) { return N(v); }), [N(l.ger[1] - l.ger[0]), N(l.ger[2] - l.ger[0])], l.th.map(function (v) { return N(v); }),
+          [N(l.rec[1]), N(l.rec[2]), N(l.acG[1]), N(l.acG[2]), N(l.acT[1]), N(l.acT[2])]); });
+    var totPj = function (rot, k) { var t = pj.principal; return [rot, "", "", "", ""].concat(t.ger.map(function (x) { return N(x[k]); }),
+      [N(t.ger[1][k] - t.ger[0][k]), N(t.ger[2][k] - t.ger[0][k])], t.th.map(function (x) { return N(x[k]); }), [N(t.rec[1][k]), N(t.rec[2][k])]); };
+    linPj.push(totPj("Total " + U.X.prazo + " anos", "tot"));
+    if (U.X.taxa != null) linPj.push(totPj("VPL a " + pc(U.X.taxa) + " a.a.", "vpl"));
+    S.push({nome: "Projeção", tit: "Projeção por ano (" + (pj.porCliente ? "R$ por cliente ativo por ano" : "R$ por ano na usina") + ")", blocos: [{cab: cabPj, linhas: linPj, nota: projTexto(U)}]});
+    var vpP = function (x) { return U.X.taxa == null ? "-" : N(x.vpl); };
+    S.push({nome: "Cenários de prazo", tit: "Cenários por prazo do contrato", blocos: [
+      {tit: "Gerador", cab: ["Prazo"].concat(NM.map(function (x) { return "Total: " + x; }), NM.map(function (x) { return "VPL: " + x; }), ["Total A - Hoje", "Total B - Hoje"]),
+        linhas: pj.prazos.map(function (p) { return [p.k + " anos"].concat(p.ger.map(function (x) { return N(x.tot); }), p.ger.map(vpP), [N(p.ger[1].tot - p.ger[0].tot), N(p.ger[2].tot - p.ger[0].tot)]); })},
+      {tit: "Thopen", cab: ["Prazo"].concat(NM.map(function (x) { return "Total: " + x; }), NM.map(function (x) { return "VPL: " + x; }), ["Receita total: A", "Receita total: B"]),
+        linhas: pj.prazos.map(function (p) { return [p.k + " anos"].concat(p.th.map(function (x) { return N(x.tot); }), p.th.map(vpP), [N(p.rec[1].tot), N(p.rec[2].tot)]); }),
+        nota: U.X.taxa != null ? "VPL a " + pc(U.X.taxa) + " a.a., fluxos anuais no fim de cada ano." : "Sem taxa de desconto: VPL não calculado."}]});
     S.push({nome: "Cláusulas", tit: "Cláusulas contratuais essenciais", blocos: [{cab: ["Cláusula", "Texto"], linhas: U.claus.map(function (c) { return [c.tit, c.txt]; })}]});
     S.push({nome: "Objeções", tit: "Objeções do Gerador e respostas", blocos: [{cab: ["Objeção", "Resposta"], linhas: U.obj.map(function (o) { return [o.obj, o.resp]; })}]});
     return S;
@@ -660,8 +982,43 @@ td.atual{outline:2px solid var(--azul);outline-offset:-2px;font-weight:700}
     setTimeout(function () { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { msg("Não foi possível abrir a impressão: libere pop-ups para este site."); } }, 400);
   }
 
+  function tarLinhas(U, ger) {  // ger = texto ao gerador ("tributos" no lugar de "impostos")
+    var T = U.tar, L = [], tf = n("f-tarifa");
+    if (T) {
+      var e = T.e;
+      L.push(["Distribuidora", T.nome], ["Modalidade", GDN[T.gd]], ["Ano de início", String(T.ano)],
+        ["Vigência B3", dataBr(e.ini) + " a " + dataBr(e.fim) + (e.reh ? " (" + e.reh + ")" : "")],
+        ["TUSD (R$/MWh)", N(e.tusd, "n2")], ["TE (R$/MWh)", N(e.te, "n2")], ["Fio B SCEE (R$/MWh)", e.fio_b_scee == null ? "-" : N(e.fio_b_scee, "n2")]);
+      if (T.t) L.push(["% do Fio B em " + T.ano + " (Lei 14.300)", N(T.t.pfb, "pct")], ["Fio B efetivo em " + T.ano + " (R$/MWh)", N(T.t.fbe, "n2")]);
+      L.push(["ICMS", N(e.icms, "pct")], ["PIS/COFINS", N(e.pc, "pct")], [ger ? "Tarifa com tributos (R$/kWh)" : "Tarifa com impostos (R$/kWh)", N(e.v_kwh, "n4")]);
+      if (T.t) L.push(["Valor compensado " + GDN[T.gd] + " em " + T.ano + " (R$/kWh)", N(T.t.w, "n4")]);
+      L.push(["Base da tarifa compensável", {c: "valor compensado", v: ger ? "tarifa com tributos" : "tarifa com impostos", m: "manual"}[T.base]]);
+    } else if (U.dist) L.push(["Distribuidora", U.dist]);
+    if (ok(tf)) L.push(["Tarifa compensável usada (R$/kWh)", N(tf, "n4")]);
+    return L;
+  }
+  function capLinhas(U) {
+    var C = U.cap, L = [];
+    if (C.g == null && !U.P.N) return L;
+    if (C.kwp != null && !C.direto) L.push(["Potência (kWp)", N(C.kwp, "int")], ["Produtividade (kWh/kWp/ano)", N(C.pr, "int")]);
+    if (C.g != null) L.push(["Geração média (MWh/mês)", N(C.g, "n2")], ["Geração compensada", N(C.pc, "pct")], ["Energia compensada (MWh/mês)", N(C.comp, "n2")]);
+    if (C.cons != null) L.push(["Consumo médio por cliente (kWh/mês)", N(C.cons, "int")]);
+    if (C.cli != null) L.push(["Capacidade calculada (clientes)", N(C.cli, "int")]);
+    if (U.P.N) L.push(["Capacidade usada (clientes)", N(U.P.N, "int")]);
+    if (U.X.deg) L.push(["Degradação anual", N(U.X.deg, "pct")]);
+    return L;
+  }
+  function gerNotaProj(U) {
+    var X = U.X;
+    return "Projeção com reajuste da tarifa de " + pc(X.rt) + " a.a." + (X.rtPad && X.ipca != null ? " (IPCA 12 meses)" : "") + " e do fee fixo e da recorrência do canal de " + pc(X.rc) + " a.a." +
+      "; meta do success fee reajustada pelo índice da tarifa; consumo por cliente constante" + (X.deg ? "; degradação de " + pc(X.deg) + " a.a." : "") +
+      (U.proj.fioB ? "; Fio B pela Lei 14.300 (2026 60%, 2027 75%, 2028 90%, 2029 em diante 100%) reduz a tarifa compensável" : "") +
+      (X.taxa != null ? "; VPL a " + pc(X.taxa) + " a.a. com fluxos no fim de cada ano" : "") + ". Tarifas da vigência atual da ANEEL; estimativa, não garantia de resultado.";
+  }
+
   // >>> PROPOSTA AO GERADOR (lista branca de campos; nada de custos, impostos ou resultado da Thopen)
-  var GER_CAMPOS = ["usina", "distribuidora", "data", "premissas", "estrutura", "resultado", "usinaTot", "sensInad", "sensOcup", "clausulas", "nota"];
+  var GER_CAMPOS = ["usina", "distribuidora", "data", "premissas", "estrutura", "resultado", "usinaTot", "sensInad", "sensOcup", "clausulas", "nota",
+    "tarifa", "capacidade", "projecao", "prazos", "notaProj"];
   function gerDados(U) {
     var P = U.P, R = U.R, A = U.cens[1], B = U.cens[2];
     var linha = function (j) { var r = R[j]; return [U.cens[j].nome, N(r.arr), N(r.df), N(r.canal), N(r.fee), N(r.sf), N(r.gerador), j ? N(r.varG, "pct") : "-"]; };
@@ -675,6 +1032,14 @@ td.atual{outline:2px solid var(--azul);outline-offset:-2px;font-weight:700}
       sensInad: U.inads.map(function (x, k) { return [N(x, "pct")].concat(U.SI[k].map(function (r) { return N(r.gerador); })); }),
       sensOcup: P.N ? U.ocups.map(function (x, k) { return [N(x, "pct")].concat(U.SW[k].map(function (r) { return N(r.gerador * r.tot); })); }) : null,
       clausulas: U.claus.map(function (c) { return [c.tit, c.txt]; }),
+      tarifa: tarLinhas(U, true),
+      capacidade: capLinhas(U),
+      projecao: U.proj.anos.slice(0, U.X.prazo).map(function (l) {
+        return [String(l.ano), l.pfb == null ? "-" : N(l.pfb, "pct"), l.tarifa == null ? "-" : N(l.tarifa, "n4")].concat(l.ger.map(function (v) { return N(v); }),
+          [N(l.ger[1] - l.ger[0]), N(l.ger[2] - l.ger[0])]); }),
+      prazos: U.proj.prazos.map(function (p) { return [p.k + " anos"].concat(p.ger.map(function (x) { return N(x.tot); }),
+        p.ger.map(function (x) { return U.X.taxa == null ? "-" : N(x.vpl); })); }),
+      notaProj: gerNotaProj(U),
       nota: "Valores por cliente por mês. O fee incide sobre a energia faturada com desconto e é pago antes do repasse; inadimplência, desconto e fatura da distribuidora não paga ficam no repasse ao Gerador." +
         (P.N ? " Valores por usina com " + f0.format(P.N) + " clientes e ocupação de " + pcc(P.w) + "." : "")
     };
@@ -692,7 +1057,13 @@ td.atual{outline:2px solid var(--azul);outline-offset:-2px;font-weight:700}
       '<p class="nota">' + esc(o.nota) + "</p></div>" +
       '<div class="sec"><h2>Sensibilidade do repasse ao Gerador: inadimplência (R$ por cliente por mês)</h2>' + relTabela(["Inadimplência"].concat(nm), o.sensInad) +
       (o.sensOcup ? "<h2>Sensibilidade do repasse ao Gerador: ocupação (R$ por mês na usina)</h2>" + relTabela(["Ocupação"].concat(nm), o.sensOcup) : "") +
-      "<h2>Cláusulas principais</h2>" + relTabela(["Cláusula", "Texto"], o.clausulas) + "</div>";
+      "<h2>Cláusulas principais</h2>" + relTabela(["Cláusula", "Texto"], o.clausulas) + "</div>" +
+      '<div class="sec"><h2>Usina e tarifa da distribuidora</h2>' + (o.tarifa.length ? relTabela(["Item", "Valor"], o.tarifa) : "") +
+      (o.capacidade.length ? "<h3>Capacidade de geração</h3>" + relTabela(["Item", "Valor"], o.capacidade) : "") +
+      "<h2>Projeção do repasse ao Gerador por ano (" + (U.proj.porCliente ? "R$ por cliente ativo por ano" : "R$ por ano na usina") + ")</h2>" +
+      relTabela(["Ano", "% Fio B", "Tarifa compensável (R$/kWh)"].concat(nm, ["Proposta A - Hoje", "Proposta B - Hoje"]), o.projecao) +
+      "<h2>Repasse ao Gerador por prazo do contrato</h2>" + relTabela(["Prazo"].concat(nm.map(function (x) { return "Total: " + x; }), nm.map(function (x) { return "VPL: " + x; })), o.prazos) +
+      '<p class="nota">' + esc(o.notaProj) + "</p></div>";
     return relDoc("Proposta de Asset Management", o.usina, c, false);
   }
   // <<< PROPOSTA AO GERADOR
@@ -707,6 +1078,7 @@ td.atual{outline:2px solid var(--azul);outline-offset:-2px;font-weight:700}
     dadosInternos(U).forEach(function (s, k) {
       corpo += '<div class="sec' + (k ? "" : " pri") + '"><h2>' + esc(s.tit) + "</h2>";
       s.blocos.forEach(function (b) { if (b.tit) corpo += "<h3>" + esc(b.tit) + "</h3>"; corpo += relTabela(b.cab, b.linhas); if (b.nota) corpo += '<p class="nota">' + esc(b.nota) + "</p>"; });
+      if (s.nome === "Projeção") { try { if (GR["g-proj"]) corpo += '<img class="graf" style="width:70%" alt="gráfico" src="' + GR["g-proj"].canvas.toDataURL("image/png") + '">'; } catch (e) {} }
       if (s.nome === "Sensibilidade") ["g-ti", "g-tw", "g-gi"].forEach(function (id) { try { if (GR[id]) corpo += '<img class="graf" alt="gráfico" src="' + GR[id].canvas.toDataURL("image/png") + '">'; } catch (e) {} });
       corpo += "</div>";
     });
@@ -718,12 +1090,12 @@ td.atual{outline:2px solid var(--azul);outline-offset:-2px;font-weight:700}
     var id = ev && ev.target && ev.target.id;
     if (id === "f-desc" && txt("f-desc")) $("f-fat").value = "";
     if (id === "f-fat" && txt("f-fat")) $("f-desc").value = "";
-    if (id === "f-consumo" || id === "f-tarifa") {
-      var k = n("f-consumo"), t = n("f-tarifa");
-      if (k != null && t != null && !isNaN(k) && !isNaN(t)) $("f-credito").value = f2.format(k * t).replace(/\./g, "");
-    }
+    if (id === "f-tarifa" && tarDist() && $("f-base").value !== "m") $("f-base").value = "m";  // tarifa digitada: base manual
+    if (id === "f-dist-sel" || id === "f-gd" || id === "f-ano" || id === "f-base") aplicaTarifa();
+    if (id === "f-consumo" || id === "f-tarifa") recalcCredito();
+    if (id === "f-pot" || id === "f-unid" || id === "f-prod" || id === "f-ger" || id === "f-pcomp" || id === "f-consumo" || id === "f-dist-sel") aplicaCap();
     $("f-meta").disabled = $("f-meta-base").checked;
-    grava(); calcula(); dicas();
+    grava(); renderAux(); calcula(); dicas();
   }
   function dicas() {
     var L = leitura(), P = L.P;
@@ -737,7 +1109,7 @@ td.atual{outline:2px solid var(--azul);outline-offset:-2px;font-weight:700}
     aplica(null); try { localStorage.removeItem(CHAVE); } catch (e) {} aoDigitar();
   });
   $("b-salvar").addEventListener("click", function () {
-    var blob = new Blob([JSON.stringify({tipo: "proposta_asset", versao: 1, salvo_em: new Date().toISOString(), campos: estado()}, null, 2)], {type: "application/json"});
+    var blob = new Blob([JSON.stringify({tipo: "proposta_asset", versao: 2, salvo_em: new Date().toISOString(), campos: estado()}, null, 2)], {type: "application/json"});
     var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = nomeArq("cenario", "json");
     document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   });
@@ -762,6 +1134,24 @@ td.atual{outline:2px solid var(--azul);outline-offset:-2px;font-weight:700}
 
   try { var s = localStorage.getItem(CHAVE); if (s) aplica(JSON.parse(s)); } catch (e) {}
   aoDigitar();
+
+  // Tarifas publicas da ANEEL (tarifas_asset.json, publicado junto com a pagina). Sem ele, o modo manual continua.
+  function semTarifas(motivo) {
+    var e = $("tar-nota");
+    e.textContent = "Tarifas da ANEEL indisponíveis (" + motivo + "). Abra a página pelo site publicado ou por um servidor local (não por arquivo). " +
+      "O modo manual continua: informe a tarifa compensável ou o crédito bruto, a capacidade e o reajuste à mão.";
+    e.style.display = ""; $("f-dist-sel").disabled = true;
+  }
+  if (window.fetch) {
+    fetch("tarifas_asset.json", {cache: "no-cache"}).then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }).then(function (j) {
+      if (!j || !j.distribuidoras || !j.anos) throw new Error("arquivo inválido");
+      J = j;
+      var sel = $("f-dist-sel");
+      Object.keys(j.distribuidoras).forEach(function (k) { var o = document.createElement("option"); o.value = k; o.textContent = k + " (" + (j.distribuidoras[k].uf || "-") + ")"; sel.appendChild(o); });
+      if (pendDist && j.distribuidoras[pendDist]) sel.value = pendDist;
+      renderAux(); calcula(); dicas();
+    }).catch(function (e) { semTarifas((e && e.message) || "erro de leitura"); });
+  } else semTarifas("navegador sem fetch");
 })();
 </script>
 </body>

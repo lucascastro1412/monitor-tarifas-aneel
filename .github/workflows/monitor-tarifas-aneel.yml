@@ -35,6 +35,7 @@ on:
       - "Painel_Tarifas_ANEEL.html"
       - "Painel_Tarifas_ANEEL.xlsx"
       - "proposta_asset.html"
+      - "tarifas_asset.json"
       - "data/**"
   workflow_dispatch:
     inputs:
@@ -130,7 +131,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898341+github-actions[bot]@users.noreply.github.com"
           git add -A data
-          for f in Painel_Tarifas_ANEEL.xlsx Painel_Tarifas_ANEEL.html; do
+          for f in Painel_Tarifas_ANEEL.xlsx Painel_Tarifas_ANEEL.html tarifas_asset.json; do
             if [ -e "$f" ]; then git add "$f"; fi
           done
           if git diff --cached --quiet; then
@@ -184,6 +185,8 @@ jobs:
             if [ -e Painel_Tarifas_ANEEL.xlsx ]; then cp Painel_Tarifas_ANEEL.xlsx site/; fi
             # Montador de proposta Asset Management: pagina estatica, sem dados (premissas so no navegador)
             if [ -e proposta_asset.html ]; then cp proposta_asset.html site/proposta_asset.html; fi
+            # Tarifas publicas (ANEEL) para o Montador: gerado junto com o painel pelo monitor_tarifas.py
+            if [ -e tarifas_asset.json ]; then cp tarifas_asset.json site/tarifas_asset.json; fi
             ls -la site
             echo "tem_painel=true" >> "$GITHUB_OUTPUT"
           else

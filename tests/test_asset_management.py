@@ -169,3 +169,177 @@ def test_workflow_publica_a_pagina():
     w = WF.read_text(encoding="utf-8")
     assert "proposta_asset.html" in w
     assert "cp proposta_asset.html site/proposta_asset.html" in w
+
+
+# ---------------- capacidade da usina
+
+def test_capacidade_piso_da_energia_compensada():
+    c = am.capacidade_usina(consumo=400.0, potencia_kwp=2000.0, produtividade=1200.0, pct_compensado=0.9)
+    assert c["geracao_mwh_mes"] == pytest.approx(200.0)          # 2.000 x 1.200 / 12 / 1.000
+    assert c["compensada_mwh_mes"] == pytest.approx(180.0)
+    assert c["clientes"] == 450                                   # 180.000 / 400
+    c2 = am.capacidade_usina(consumo=333.0, geracao_mwh_mes=100.0)
+    assert c2["clientes"] == 300                                  # piso(100.000 / 333) = 300,3
+    assert am.capacidade_usina(consumo=None, geracao_mwh_mes=100.0)["clientes"] is None
+    assert am.capacidade_usina(consumo=300.0)["clientes"] is None
+
+
+# ---------------- projecao por ano
+
+A_ = {"pct": 0.05, "fixo": 20.0}
+B_ = {"pct": 0.05, "fixo": 10.0, "sigma": 0.2, "meta": None}
+
+
+def test_projecao_ano0_igual_ao_modelo_estatico():
+    p = _p(ocupacao=0.8)
+    pr = am.projecao(p, 3, 0.6, A_, B_, reaj_tarifa=0.05, reaj_custos=0.04, degradacao=0.01)
+    r0 = pr[0]["por_cliente"]
+    assert r0["a"]["thopen"] == pytest.approx(am.proposta(p, 0.05, 20)["thopen"])
+    assert r0["hoje"]["gerador"] == pytest.approx(am.hoje(p, 0.6)["gerador"])
+    meta = am.proposta(p, 0.05, 10)["gerador_antes_sf"]
+    assert r0["b"]["gerador"] == pytest.approx(am.proposta(p, 0.05, 10, 0.2, meta)["gerador"])
+    assert pr[0]["a"]["gerador"] == pytest.approx(am.totais_usina(p, r0["a"]["gerador"])["ano"])
+
+
+def test_reajuste_da_tarifa_composto():
+    p = _p()
+    pr = am.projecao(p, 4, 0.6, A_, B_, reaj_tarifa=0.10, reaj_custos=0.03)
+    pt = pr[3]["premissas"]
+    assert pt.credito == pytest.approx(300 * 1.1 ** 3)
+    assert pt.faturada == pytest.approx(300 * 1.1 ** 3 * 0.85)
+    assert pt.fatura_dist == pytest.approx(50 * 1.1 ** 3)
+    assert pt.recorrencia_canal == pytest.approx(10 * 1.03 ** 3)
+    assert pt.ga == pytest.approx(20 * 1.03 ** 3)
+    assert pr[3]["por_cliente"]["a"]["fee"] == pytest.approx(0.05 * 300 * 1.1 ** 3 * 0.85 + 20 * 1.03 ** 3)
+    assert pr[3]["por_cliente"]["hoje"]["gerador"] == pytest.approx(0.6 * 300 * 1.1 ** 3)
+
+
+def test_fio_b_reduz_credito_gd2_e_nao_gd1():
+    import monitor_tarifas as mt
+    tusd, te, icms, pc = 400.0, 300.0, 0.18, 0.05
+    anos = list(range(2026, 2032))
+    w1 = [mt.calc_gd(tusd, te, icms, pc, 1, 1)["W"] / 1000 for _ in anos]
+    w2 = [mt.calc_gd(tusd, te, icms, pc, 1, 1, fb_ef=200.0 * mt.escalonamento_ano(a))["W"] / 1000 for a in anos]
+    base1, base2 = w1[0], w2[0]
+    f1 = [am.credito_kwh_ano(base1, w1[0], w) / base1 for w in w1]
+    f2 = [am.credito_kwh_ano(base2, w2[0], w) / base2 for w in w2]
+    assert all(f == pytest.approx(1.0) for f in f1)
+    assert f2[0] == pytest.approx(1.0) and f2[1] < 1.0 and f2[3] < f2[2] < f2[1]
+    assert f2[4] == pytest.approx(f2[3])  # 2030 = 2029: 100% do Fio B
+    p = _p(clientes=100)
+    g1 = am.projecao(p, 6, 0.6, A_, B_, fatores_fio_b=f1)
+    g2 = am.projecao(p, 6, 0.6, A_, B_, fatores_fio_b=f2)
+    assert g2[0]["a"]["gerador"] == pytest.approx(g1[0]["a"]["gerador"])
+    assert g2[5]["a"]["gerador"] < g1[5]["a"]["gerador"]
+    assert g1[5]["a"]["gerador"] == pytest.approx(g1[0]["a"]["gerador"])  # sem reajuste e sem Fio B: igual
+
+
+def test_degradacao_reduz_clientes():
+    pr = am.projecao(_p(clientes=1000), 3, 0.6, A_, B_, degradacao=0.05)
+    assert [x["premissas"].clientes for x in pr] == [1000, 950, 902]
+    assert pr[2]["ativos"] < pr[0]["ativos"]
+    assert pr[2]["a"]["gerador"] < pr[0]["a"]["gerador"]
+
+
+def test_ocupacao_ano1_ramp_up():
+    pr = am.projecao(_p(clientes=1000, ocupacao=0.9), 2, 0.6, A_, B_, ocupacao_ano1=0.5)
+    assert pr[0]["ativos"] == pytest.approx(500) and pr[1]["ativos"] == pytest.approx(900)
+
+
+def test_vpl_formula():
+    assert am.vpl([100.0, 100.0], 0.10) == pytest.approx(100 / 1.1 + 100 / 1.21)
+    assert am.vpl([50.0], 0.0) == pytest.approx(50.0)
+    pr = am.projecao(_p(), 5, 0.6, A_, B_)
+    c = am.cenario_prazo(pr, 3, 0.12)
+    fl = [x["a"]["thopen"] for x in pr[:3]]
+    assert c["a"]["thopen"]["total"] == pytest.approx(sum(fl))
+    assert c["a"]["thopen"]["vpl"] == pytest.approx(sum(f / 1.12 ** (t + 1) for t, f in enumerate(fl)))
+    assert am.cenario_prazo(pr, 3)["a"]["thopen"]["vpl"] is None
+
+
+@pytest.mark.parametrize("cen", ["hoje", "a", "b"])
+def test_cascata_fecha_todo_ano(cen):
+    pr = am.projecao(_p(), 6, 0.6, A_, B_, reaj_tarifa=0.06, reaj_custos=0.03,
+                     fatores_fio_b=[1, 0.97, 0.94, 0.92, 0.92, 0.92], degradacao=0.01)
+    for x in pr:
+        pt, r = x["premissas"], x["por_cliente"][cen]
+        assert r["gerador"] + r["receita"] + pt.fatura_dist + pt.recorrencia_canal == pytest.approx(am.arrecadacao(pt))
+
+
+def test_meta_do_success_fee_segue_a_tarifa():
+    pr = am.projecao(_p(), 3, 0.6, A_, B_, reaj_tarifa=0.10, reaj_custos=0.10)
+    # tudo sobe 10% a.a.: o excedente sobre a meta reajustada continua zero
+    assert all(x["por_cliente"]["b"]["success_fee"] == pytest.approx(0.0, abs=1e-9) for x in pr)
+
+
+# ---------------- tarifas_asset.json (dados publicos do painel)
+
+ARQ_TAR = RAIZ / "tarifas_asset.json"
+
+
+def _painel_dados() -> dict:
+    import json
+    h = (RAIZ / "Painel_Tarifas_ANEEL.html").read_text(encoding="utf-8")
+    m = re.search(r'<script type="application/json" id="dados">(.*?)</script>', h, re.S)
+    return json.loads(m.group(1).replace("<\\/", "</"))
+
+
+def test_tarifas_asset_chaves_e_consistencia_com_o_painel():
+    import json
+    import monitor_tarifas as mt
+    j = json.loads(ARQ_TAR.read_text(encoding="utf-8"))
+    for k in ("ano0", "anos", "pct_fb", "ipca12", "produtividade", "distribuidoras"):
+        assert k in j, k
+    assert len(j["anos"]) == mt.ASSET_ANOS + 1 and j["anos"][0] == j["ano0"]
+    assert [j["pct_fb"]["II"][k] for k, a in enumerate(j["anos"])] == [mt.escalonamento_ano(a) for a in j["anos"]]
+    assert j["pct_fb"]["II"][-1] == pytest.approx(1.0) and set(j["pct_fb"]["I"]) == {0.0}
+    D = j["distribuidoras"]
+    enel = [k for k in D if k.upper().startswith("ENEL SP")]
+    assert enel and "CPFL PAULISTA" in D
+    painel = _painel_dados()
+    for nome in (enel[0], "CPFL PAULISTA"):
+        e = D[nome]
+        for k in ("uf", "ini", "reh", "tusd", "te", "icms", "pis", "cofins", "pc", "flag_icms_te", "flag_icms_tusd",
+                  "fio_b_scee", "v_kwh", "gd"):
+            assert k in e, (nome, k)
+        for g in ("I", "II", "III"):
+            assert len(e["gd"][g]["w"]) == len(j["anos"]) and len(e["gd"][g]["fbe"]) == len(j["anos"])
+        m = painel["m"][nome]
+        t = m["tx"]
+        assert e["tusd"] == pytest.approx(m["tusd"]) and e["te"] == pytest.approx(m["te"])
+        r = mt.calc_arrendamento(m["tusd"], m["te"], t["i"], t["pis"] + t["cof"], t["te"], t["tu"], t["s"])
+        assert e["gd"]["I"]["w"][0] * 1000 == pytest.approx(r["W_I"], abs=0.01)   # GD I = W_I do Arrendamento
+        assert e["v_kwh"] * 1000 == pytest.approx(r["V"], abs=0.01)
+        # GD II: W = W_I - Fio B efetivo x fator TUSD; o Fio B crescente reduz o valor compensado
+        w2 = e["gd"]["II"]["w"]
+        assert w2[-1] < w2[0] <= e["gd"]["I"]["w"][0]
+        k = len(j["anos"]) - 1
+        assert w2[k] * 1000 == pytest.approx(r["W_I"] - e["gd"]["II"]["fbe"][k] * r["k_tusd"], abs=0.01)
+    assert painel["arr"]["neg"]["ipca12"] == pytest.approx(j["ipca12"])
+
+
+def test_tarifas_asset_gerado_pelas_funcoes_do_pipeline():
+    from datetime import date
+
+    import pandas as pd
+
+    import monitor_tarifas as mt
+    met = pd.DataFrame([{"ativa": True, "tusd": 400.0, "te": 300.0, "fiob": 200.0, "fiob_suspeito": False, "uf": "SP",
+                         "sigla": "X", "inicio": "2026-01-01", "fim": "2027-01-01", "reh": "REH 1",
+                         "fiob_inicio": "2026-01-01", "fiob_reh": "REH 1"}], index=["DIST TESTE"])
+    imp = pd.DataFrame([{"icms": 0.18, "pis": 0.01, "cofins": 0.04, "pc": 0.05, "flag_te": 1, "flag_tusd": 1, "s": 0.5,
+                         "fonte_icms": "padrão 18%"}], index=["DIST TESTE"])
+    j = mt.dados_tarifas_asset({"metricas": met, "imp": imp, "hoje": date(2026, 6, 1), "prod": {"SP": (1500.0, "x")}})
+    e = j["distribuidoras"]["DIST TESTE"]
+    i28 = j["anos"].index(2028)
+    g = mt.calc_gd(400, 300, 0.18, 0.05, 1, 1, 0.5, 200 * 0.9)
+    assert e["gd"]["II"]["w"][i28] == pytest.approx(g["W"] / 1000, abs=1e-6)
+    assert e["gd"]["II"]["fbe"][i28] == pytest.approx(180.0)
+    assert e["gd"]["I"]["w"][i28] == pytest.approx(mt.calc_arrendamento(400, 300, 0.18, 0.05, 1, 1)["W_I"] / 1000, abs=1e-6)
+    assert j["produtividade"] == {"SP": 1500.0} and e["fonte_aliquotas"] == "padrão"
+
+
+def test_tarifas_asset_publicado_no_workflow():
+    w = WF.read_text(encoding="utf-8")
+    assert "cp tarifas_asset.json site/tarifas_asset.json" in w
+    assert '"tarifas_asset.json"' in w

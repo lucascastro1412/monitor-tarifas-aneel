@@ -110,7 +110,7 @@ try {
 
     Invoke-Git add -A data
     foreach ($f in @("Painel_Tarifas_ANEEL.xlsx", "Painel_Tarifas_ANEEL.html", "impostos_distribuidoras.csv",
-                     "impostos_meta.json")) {
+                     "impostos_meta.json", "tarifas_asset.json")) {
         if (Test-Path $f) { Invoke-Git add $f }
     }
     & git diff --cached --quiet

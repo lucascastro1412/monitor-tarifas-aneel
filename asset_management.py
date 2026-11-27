@@ -17,6 +17,7 @@ Sem dados reais: as premissas ficam no navegador do usuario ou em arquivos de ce
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 from typing import Optional
 
@@ -128,3 +129,86 @@ def variacao(gerador: float, gerador_hoje: float) -> Optional[float]:
 
 def com(p: Premissas, **kw) -> Premissas:
     return replace(p, **kw)
+
+
+# ---------------------------------------------------------------- capacidade da usina
+
+def capacidade_usina(consumo: Optional[float], potencia_kwp: Optional[float] = None,
+                     produtividade: Optional[float] = None, geracao_mwh_mes: Optional[float] = None,
+                     pct_compensado: float = 1.0) -> dict:
+    """Geracao media (MWh/mes) = kWp x kWh/kWp/ano / 12 / 1000 (mesma conta de geracao_mwh_mes do painel, UFV) ou a
+    geracao direta informada; energia compensada = geracao x % compensado; capacidade (clientes) =
+    piso(energia compensada em kWh/mes / consumo medio por cliente)."""
+    if geracao_mwh_mes is not None:
+        ger = geracao_mwh_mes
+    elif potencia_kwp is not None and produtividade is not None:
+        ger = potencia_kwp * produtividade / 12 / 1000
+    else:
+        ger = None
+    comp = ger * pct_compensado if ger is not None else None
+    clientes = math.floor(comp * 1000 / consumo + 1e-9) if comp is not None and consumo else None
+    return {"geracao_mwh_mes": ger, "compensada_mwh_mes": comp, "clientes": clientes}
+
+
+# ---------------------------------------------------------------- projecao por ano e cenarios de prazo
+
+def credito_kwh_ano(tarifa_base: float, w_inicio: float, w_ano: float) -> float:
+    """Tarifa compensavel do ano (antes do reajuste): a base perde o aumento do Fio B efetivo entre o ano de inicio e
+    o ano civil (w = valor compensado do painel em R$/kWh no ano; GD I tem w constante, entao nao muda)."""
+    return tarifa_base - (w_inicio - w_ano)
+
+
+def vpl(fluxos: list[float], taxa: float) -> float:
+    """Fluxos anuais no fim de cada ano (mesma convencao do painel): soma fluxo_t / (1 + taxa)^(t + 1)."""
+    return sum(f / (1.0 + taxa) ** (t + 1) for t, f in enumerate(fluxos))
+
+
+def premissas_ano(p: Premissas, t: int, reaj_tarifa: float = 0.0, reaj_custos: float = 0.0, fator_fio_b: float = 1.0,
+                  ocupacao: Optional[float] = None, degradacao: float = 0.0) -> Premissas:
+    """Premissas do ano t (0 = ano de inicio). Credito x fator do Fio B x (1 + reajuste da tarifa)^t, desconto constante;
+    fatura da distribuidora pelo reajuste da tarifa; canal, custo de operacao e G&A pelo reajuste dos custos;
+    capacidade = piso(clientes x (1 - degradacao)^t)."""
+    ft, fc = (1.0 + reaj_tarifa) ** t, (1.0 + reaj_custos) ** t
+    cred = p.credito * fator_fio_b * ft
+    n = math.floor(p.clientes * (1.0 - degradacao) ** t + 1e-9) if p.clientes else None
+    return replace(p, credito=cred, faturada=cred * (1.0 - p.desconto), fatura_dist=p.fatura_dist * ft,
+                   recorrencia_canal=p.recorrencia_canal * fc, custo_operacao=p.custo_operacao * fc, ga=p.ga * fc,
+                   ocupacao=p.ocupacao if ocupacao is None else ocupacao, clientes=n)
+
+
+def projecao(p: Premissas, anos: int, take_rate: float, a: dict, b: dict, reaj_tarifa: float = 0.0,
+             reaj_custos: float = 0.0, fatores_fio_b: Optional[list[float]] = None, ocupacao_ano1: Optional[float] = None,
+             degradacao: float = 0.0) -> list[dict]:
+    """Projecao ano a ano de Hoje, Proposta A e Proposta B. a = {pct, fixo}; b = {pct, fixo, sigma, meta}: fee fixo
+    pelo reajuste dos custos; meta do success fee pelo reajuste da tarifa (meta None = resultado do Gerador antes do
+    success fee no ano 0). Valores anuais = valor por cliente ativo x clientes ativos x 12 (sem capacidade: 1 cliente
+    ativo)."""
+    meta0 = b.get("meta")
+    if b.get("sigma") and meta0 is None:
+        meta0 = proposta(p, b["pct"], b["fixo"])["gerador_antes_sf"]
+    out = []
+    for t in range(int(anos)):
+        ff = fatores_fio_b[t] if fatores_fio_b else 1.0
+        oc = ocupacao_ano1 if (t == 0 and ocupacao_ano1 is not None) else None
+        pt = premissas_ano(p, t, reaj_tarifa, reaj_custos, ff, oc, degradacao)
+        ft, fc = (1.0 + reaj_tarifa) ** t, (1.0 + reaj_custos) ** t
+        r = {"hoje": hoje(pt, take_rate), "a": proposta(pt, a["pct"], a["fixo"] * fc),
+             "b": proposta(pt, b["pct"], b["fixo"] * fc, b.get("sigma", 0.0), meta0 * ft if meta0 is not None else None)}
+        ativos = pt.clientes * pt.ocupacao if pt.clientes else 1.0
+        linha = {"t": t, "premissas": pt, "ativos": ativos, "por_cliente": r}
+        for k, x in r.items():
+            linha[k] = {"gerador": x["gerador"] * ativos * 12, "thopen": x["thopen"] * ativos * 12,
+                        "receita": x["receita"] * ativos * 12}
+        out.append(linha)
+    return out
+
+
+def cenario_prazo(proj: list[dict], prazo: int, taxa: Optional[float] = None) -> dict:
+    """Total e VPL (se houver taxa) por cenario nos primeiros `prazo` anos da projecao."""
+    res = {}
+    for k in ("hoje", "a", "b"):
+        res[k] = {}
+        for v in ("gerador", "thopen", "receita"):
+            fl = [linha[k][v] for linha in proj[:prazo]]
+            res[k][v] = {"total": sum(fl), "vpl": vpl(fl, taxa) if taxa is not None else None}
+    return res

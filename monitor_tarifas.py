@@ -5313,6 +5313,79 @@ a{color:var(--azul2)}
 
 # ---------------------------------------------------------------------------- main
 
+ARQ_TARIFAS_ASSET = "tarifas_asset.json"   # dados publicos para o Montador de proposta Asset Management
+ASSET_ANOS = 25                             # ano atual ate + 25 anos
+
+
+def _fonte_curta(f: str) -> str:
+    """Origem das aliquotas sem detalhes da base de faturas: faturas, planilha ou padrao."""
+    return "faturas" if f.startswith("faturas") else "planilha" if f.startswith("planilha") else "padrão" if f else ""
+
+
+def dados_tarifas_asset(visoes: dict, agora: datetime | None = None) -> dict:
+    """Tarifas publicas (ANEEL) por distribuidora ativa para o Montador de proposta Asset Management.
+
+    Mesmas contas do painel: aliquotas, flags e s de tabela_impostos; valor compensado por calc_gd (GD I = W_I de
+    calc_arrendamento, Fio B efetivo 0; GD II e GD III = (TUSD - Fio B efetivo) x fator TUSD + TE x fator TE, com
+    Fio B efetivo = Fio B SCEE da vigencia atual x % da Lei 14.300 de cada ano civil). Tarifas da vigencia atual,
+    sem reajuste futuro. Valores em R$/MWh (TUSD, TE, Fio B) e R$/kWh (valor compensado, tarifa com impostos)."""
+    met, imp = visoes["metricas"], visoes.get("imp")
+    hoje = visoes.get("hoje") or date.today()
+    ano0 = hoje.year
+    anos = list(range(ano0, ano0 + ASSET_ANOS + 1))
+    pct = {"I": [0.0] * len(anos), "II": [escalonamento_ano(a) for a in anos]}
+    pct["III"] = list(pct["II"])
+    dists = {}
+    for d, m in met.iterrows():
+        if not bool(m["ativa"]) or pd.isna(m["tusd"]) or pd.isna(m["te"]) or imp is None or d not in imp.index:
+            continue
+        x = imp.loc[d]
+        icms, pc, fte, ftu, s = float(x["icms"]), float(x["pc"]), int(x["flag_te"]), int(x["flag_tusd"]), float(x["s"])
+        if not (icms < 1 and pc < 1):
+            continue
+        tusd, te = float(m["tusd"]), float(m["te"])
+        fb_ok = pd.notna(m["fiob"]) and not bool(m["fiob_suspeito"])
+        fb = float(m["fiob"]) if fb_ok else None
+        g1 = calc_gd(tusd, te, icms, pc, fte, ftu, s)
+        gd = {"I": {"fbe": [0.0] * len(anos), "w": [_num(g1["W"] / 1000, 6)] * len(anos)}}
+        for k in ("II", "III"):
+            if fb is None:
+                gd[k] = None
+                continue
+            fbe = [fb * p for p in pct[k]]
+            gd[k] = {"fbe": [_num(v, 4) for v in fbe],
+                     "w": [_num(calc_gd(tusd, te, icms, pc, fte, ftu, s, v)["W"] / 1000, 6) for v in fbe]}
+        dists[d] = {
+            "uf": _txt(m["uf"]), "sigla": _txt(m["sigla"]), "ini": _txt(m["inicio"]), "fim": _txt(m["fim"]),
+            "reh": reh_curta(_txt(m["reh"])), "tusd": _num(tusd), "te": _num(te), "icms": _num(icms, 6),
+            "pis": _num(x["pis"], 6), "cofins": _num(x["cofins"], 6), "pc": _num(pc, 6),
+            "flag_icms_te": fte, "flag_icms_tusd": ftu, "fonte_aliquotas": _fonte_curta(_txt(x["fonte_icms"])),
+            "fio_b_scee": _num(fb) if fb is not None else None, "fio_b_ini": _txt(m["fiob_inicio"]) if fb_ok else "",
+            "fio_b_reh": reh_curta(_txt(m["fiob_reh"])) if fb_ok else "",
+            "k_tusd": _num(g1["k_tusd"], 6), "k_te": _num(g1["k_te"], 6),
+            "v_kwh": _num(g1["V"] / 1000, 6), "gd": gd,
+        }
+    prod = visoes.get("prod") or {}
+    agora = agora or datetime.now(FUSO_BR)
+    return {
+        "tipo": "tarifas_asset", "versao": 1, "gerado_em": agora.strftime("%Y-%m-%d %H:%M"),
+        "fonte": "ANEEL (tarifas B3 e Fio B SCEE da vigencia atual), aliquotas e flags do Monitor de Tarifas ANEEL, "
+                 "IPCA do Banco Central (SGS 433), produtividade de produtividade_uf.csv",
+        "ano0": ano0, "anos": anos, "pct_fb": pct,
+        "escalonamento": {str(k): v for k, v in ESCALONAMENTO_FIOB.items()},
+        "ipca12": _num(ipca_12m(visoes), 6),
+        "ipca12_ate": ((visoes.get("ctx") or {}).get("ipca_ultimo_mes") or ""),
+        "produtividade": {uf: _num(v, 1) for uf, (v, _f) in sorted(prod.items())},
+        "produtividade_padrao": PRODUTIVIDADE_PADRAO,
+        "distribuidoras": dict(sorted(dists.items())),
+    }
+
+
+def gerar_tarifas_asset(caminho: Path, visoes: dict, agora: datetime | None = None) -> None:
+    dados = dados_tarifas_asset(visoes, agora)
+    caminho.write_text(json.dumps(dados, ensure_ascii=False, allow_nan=False, separators=(",", ":")), encoding="utf-8")
+
+
 def gerar_paineis(base: Path, visoes: dict, log_path: Path, cfg: dict, agora: datetime, estado: dict) -> None:
     visoes["imp_meta"] = meta_impostos(base)
     visoes["imp"] = tabela_impostos(visoes, base)
@@ -5324,6 +5397,9 @@ def gerar_paineis(base: Path, visoes: dict, log_path: Path, cfg: dict, agora: da
     painel_html = base / f"{PAINEL}.html"
     gerar_html(painel_html, visoes, log_path, cfg, agora, estado)
     print(f"Painel HTML gerado: {painel_html}")
+    arq_asset = base / ARQ_TARIFAS_ASSET
+    gerar_tarifas_asset(arq_asset, visoes, agora)
+    print(f"Tarifas do Montador Asset geradas: {arq_asset}")
 
 
 def no_escopo_fiob(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
