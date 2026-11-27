@@ -1,11 +1,11 @@
 {
-  "gerado_em": "2026-11-26T07:30:12-03:00",
+  "gerado_em": "2026-11-27T07:30:12-03:00",
   "mes_ref_inicio": "2026-09",
   "mes_ref_fim": "2026-11",
   "mes_ref_inicio_estendida": "2026-06",
   "janela_meses": 3,
   "janela_estendida_meses": 6,
-  "n_faturas": 170820,
+  "n_faturas": 174246,
   "n_distribuidoras": 31,
   "origem": "faturas de UCs consumidoras da base Thopen (agregado por distribuidora)"
 }

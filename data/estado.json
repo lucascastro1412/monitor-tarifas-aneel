@@ -1,5 +1,5 @@
 {
-  "assinatura_painel": "3cb5e75f418da37b0e4c581675ed616bece2b3b7",
+  "assinatura_painel": "a9d55fc5a958dff19196ac0bab2b7c8eb8c3884c",
   "avisos_fonte": [],
   "distribuidoras_grupo_a": {
     "A3 Azul": 49,
@@ -16,13 +16,13 @@
   },
   "fiob_ano_inicial": 2026,
   "linhas": {
-    "fiob_b3": 398,
-    "fiob_grupo_a": 2675,
-    "tarifa_b3": 2750,
-    "tarifa_grupo_a": 14670
+    "fiob_b3": 400,
+    "fiob_grupo_a": 2692,
+    "tarifa_b3": 2752,
+    "tarifa_grupo_a": 14687
   },
   "linhas_fiob_por_ano_vigencia": {
-    "2026": 398
+    "2026": 400
   },
   "linhas_removidas_fonte": {
     "fiob_b3": 0,
@@ -40,20 +40,20 @@
       "size": 6888797
     },
     "fiob_2025": {
-      "baixado_em": "2026-11-26",
+      "baixado_em": "2026-11-27",
       "inicio_min": "2026-01-01",
-      "last_modified": "2026-11-26T05:30:51.916002",
+      "last_modified": "2026-11-27T05:40:55.546335",
       "linhas": 210,
       "resource_id": "2a7a5364-8bd7-4464-9c56-587d77329447",
-      "size": 30142783
+      "size": 30223199
     },
     "fiob_2026": {
-      "baixado_em": "2026-11-26",
+      "baixado_em": "2026-11-27",
       "inicio_min": "2026-01-01",
-      "last_modified": "2026-11-26T05:30:36.173024",
-      "linhas": 186,
+      "last_modified": "2026-11-27T05:40:39.511083",
+      "linhas": 188,
       "resource_id": "59c32c89-8e86-4122-a7cf-a0d5fa9d0ff5",
-      "size": 13121449
+      "size": 13269774
     },
     "fiob_a_2024": {
       "baixado_em": "2026-11-24",
@@ -65,41 +65,41 @@
       "subgrupos": "A4,A3"
     },
     "fiob_a_2025": {
-      "baixado_em": "2026-11-26",
+      "baixado_em": "2026-11-27",
       "inicio_min": "2026-01-01",
-      "last_modified": "2026-11-26T05:30:51.916002",
+      "last_modified": "2026-11-27T05:40:55.546335",
       "linhas": 1401,
       "resource_id": "2a7a5364-8bd7-4464-9c56-587d77329447",
-      "size": 30142783,
+      "size": 30223199,
       "subgrupos": "A4,A3"
     },
     "fiob_a_2026": {
-      "baixado_em": "2026-11-26",
+      "baixado_em": "2026-11-27",
       "inicio_min": "2026-01-01",
-      "last_modified": "2026-11-26T05:30:36.173024",
-      "linhas": 1257,
+      "last_modified": "2026-11-27T05:40:39.511083",
+      "linhas": 1274,
       "resource_id": "59c32c89-8e86-4122-a7cf-a0d5fa9d0ff5",
-      "size": 13121449,
+      "size": 13269774,
       "subgrupos": "A4,A3"
     },
     "tarifas_b3": {
-      "baixado_em": "2026-11-26",
-      "last_modified": "2026-11-26T10:27:12.787203",
-      "linhas": 2750,
+      "baixado_em": "2026-11-27",
+      "last_modified": "2026-11-27T10:04:16.915079",
+      "linhas": 2752,
       "resource_id": "9af99ef4-376a-4493-a075-5e48ab4da51b",
-      "size": 1696454
+      "size": 1696227
     },
     "tarifas_grupo_a": {
-      "baixado_em": "2026-11-26",
+      "baixado_em": "2026-11-27",
       "inicio_min": "2016-01-01",
-      "last_modified": "2026-11-26T10:27:12.787203",
-      "linhas": 14670,
+      "last_modified": "2026-11-27T10:04:16.915079",
+      "linhas": 14687,
       "resource_id": "9af99ef4-376a-4493-a075-5e48ab4da51b",
-      "size": 1696454,
+      "size": 1696227,
       "subgrupos": "A4,A3"
     }
   },
-  "ultima_verificacao": "2026-11-26",
+  "ultima_verificacao": "2026-11-27",
   "ultima_vigencia_b3": "2026-11-22",
   "ultima_vigencia_fiob": "2026-11-22",
   "ultima_vigencia_grupo_a": "2026-11-22"
