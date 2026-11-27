@@ -3032,6 +3032,7 @@ a{color:var(--azul2)}
     <span>Painel gerado em <span id="m-gerado"></span> (Brasília)</span>
     <span>Fontes: dadosabertos.aneel.gov.br e Banco Central (IPCA)</span>
     <span><a href="Painel_Tarifas_ANEEL.xlsx" download style="color:#fff;font-weight:600">Baixar Excel</a></span>
+    <span><a href="proposta_asset.html" style="color:#fff;font-weight:600">Montador de proposta: Asset Management</a></span>
     <span class="status"><i></i>Agente ativo: verificação automática diária</span>
   </div>
   <nav class="abas" id="abas">

@@ -34,6 +34,7 @@ on:
     paths:
       - "Painel_Tarifas_ANEEL.html"
       - "Painel_Tarifas_ANEEL.xlsx"
+      - "proposta_asset.html"
       - "data/**"
   workflow_dispatch:
     inputs:
@@ -181,6 +182,8 @@ jobs:
             mkdir -p site
             cp Painel_Tarifas_ANEEL.html site/index.html
             if [ -e Painel_Tarifas_ANEEL.xlsx ]; then cp Painel_Tarifas_ANEEL.xlsx site/; fi
+            # Montador de proposta Asset Management: pagina estatica, sem dados (premissas so no navegador)
+            if [ -e proposta_asset.html ]; then cp proposta_asset.html site/proposta_asset.html; fi
             ls -la site
             echo "tem_painel=true" >> "$GITHUB_OUTPUT"
           else
